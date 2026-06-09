@@ -1,0 +1,2 @@
+./original_img/train/40764_right.jpeg | zero-size array to reduction operation maximum which has no identity
+./original_img/train/15337_left.jpeg | zero-size array to reduction operation maximum which has no identity

@@ -1,0 +1,3 @@
+./original_img/test/26250_left.jpeg | zero-size array to reduction operation maximum which has no identity
+./original_img/test/13227_left.jpeg | zero-size array to reduction operation maximum which has no identity
+./original_img/test/5371_left.jpeg | zero-size array to reduction operation maximum which has no identity

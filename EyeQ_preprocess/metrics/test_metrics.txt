@@ -1,0 +1,5 @@
+Total de imagens encontradas : 53576
+Processadas com sucesso      : 53573
+Falhas                       : 3
+Tempo total                  : 1101.8s
+Tempo médio por imagem       : 0.897s

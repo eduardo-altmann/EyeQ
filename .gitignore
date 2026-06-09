@@ -1,0 +1,70 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+
+# Virtual environments
+.env
+.venv/
+venv/
+env/
+ENV/
+
+# IDEs / editors
+.vscode/
+.idea/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Python testing / coverage
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Type checker / caches
+.mypy_cache/
+.pyright/
+__pypackages__/
+
+# Jupyter
+.ipynb_checkpoints
+
+# Logs and databases
+*.log
+*.sqlite3
+*.db
+
+# Machine learning artifacts / checkpoints
+*.pt
+*.pth
+*.ckpt
+*.tar
+*.pth.tar
+*.ckpt.*
+checkpoints/
+models/
+model/
+
+# Project-specific output directories
+MCF_Net/result/
+result/
+figure/
+EyeQ_preprocess/test
+EyeQ_preprocess/train
+EyeQ_preprocess/original_img
+
+# Misc
+*.egg
+

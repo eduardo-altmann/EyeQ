@@ -1,0 +1,3 @@
+The original project is not mine, you can check it out here: https://github.com/HzFu/EyeQ/ 
+
+This repository aims to reproduce the experiment of the article from the original repository, while adding improvements and support to multi-gpu.
