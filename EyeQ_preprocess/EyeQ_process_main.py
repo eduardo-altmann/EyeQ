@@ -49,7 +49,7 @@ def process(image_list, save_path):
 
     with Pool(44) as p:
         worker_fn = partial(worker, save_path=save_path)
-        for ok, failure, elapsed in p.imap_unordered(worker_fn, image_list, chunksize=16):
+        for ok, failure, elapsed in p.imap_unordered(worker_fn, image_list, chunksize=32):
             if ok:
                 success += 1
                 times.append(elapsed)
