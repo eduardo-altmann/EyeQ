@@ -5,16 +5,12 @@ import numpy as np
 import pandas as pd
 
 
-def train_step(train_loader, model, epoch, optimizer, criterion, args, device=None, local_rank=0,
-               scheduler=None, global_step=0, return_global_step=False):
+def train_step(train_loader, model, epoch, optimizer, criterion, args, device, local_rank):
 
     # switch to train mode
     model.train()
     epoch_loss = 0.0
     loss_w =args.loss_w
-
-    if device is None:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     iters_per_epoch = len(train_loader)
     bar = None
@@ -48,11 +44,6 @@ def train_step(train_loader, model, epoch, optimizer, criterion, args, device=No
         lossValue.backward()
         optimizer.step()
 
-        # For step-based schedulers (e.g., cosine over total updates).
-        if scheduler is not None:
-            scheduler.step()
-            global_step += 1
-
         # measure elapsed time
         epoch_loss += lossValue.item()
         end_time = time.time()
@@ -68,8 +59,6 @@ def train_step(train_loader, model, epoch, optimizer, criterion, args, device=No
 
     if bar is not None:
         bar.finish()
-    if return_global_step:
-        return epoch_loss, global_step
     return epoch_loss
 
 

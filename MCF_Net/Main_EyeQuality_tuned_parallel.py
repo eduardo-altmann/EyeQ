@@ -1,7 +1,6 @@
 import os
 import argparse
 import numpy as np
-import math
 import torch
 import torch.backends.cudnn as cudnn
 import time
@@ -33,7 +32,6 @@ def cleanup_ddp():
 def main():
     local_rank = setup_ddp()
     device = torch.device(f"cuda:{local_rank}")
-    world_size = dist.get_world_size()
 
     np.random.seed(0)
     torch.manual_seed(0)
@@ -57,12 +55,8 @@ def main():
     parser.add_argument('--epochs', default=60, type=int)
     parser.add_argument('--batch-size', default=4, type=int,
                         help='Increase from 4 to 16 for better gradient estimation')
-    parser.add_argument('--global_batch_size', default=4, type=int,
-                        help='Target global batch size. If > 0, per-GPU batch is auto-adjusted.')
     parser.add_argument('--lr', default=0.001, type=float,
                         help='Lower LR since we use pretrained weights (was 0.01)')
-    parser.add_argument('--min_lr', default=1e-6, type=float,
-                        help='Minimum LR for cosine scheduler')
     parser.add_argument('--momentum', default=0.9, type=float,
                         help='SGD momentum (was missing)')
     parser.add_argument('--weight_decay', default=1e-4, type=float,
@@ -85,15 +79,6 @@ def main():
                         help='Use ImageNet pretrained DenseNet121 backbone')
 
     args = parser.parse_args()
-
-    if args.global_batch_size > 0:
-        auto_batch = max(1, args.global_batch_size // world_size)
-        if local_rank == 0 and args.global_batch_size % world_size != 0:
-            print(f'Warning: global_batch_size={args.global_batch_size} not divisible by world_size={world_size}.')
-            print(f'Using per-GPU batch={auto_batch} -> effective global batch={auto_batch * world_size}.')
-        args.batch_size = auto_batch
-
-    effective_global_batch = args.batch_size * world_size
 
     # Images Labels
     train_images_dir = data_root + '/train'
@@ -136,20 +121,17 @@ def main():
 
     # ============================================================
     # Learning rate scheduler
-    # cosine: step-based scheduler (global updates) with integrated warmup
-    # step: epoch-based scheduler
     # ============================================================
-    scheduler = None
-    total_train_steps = None
-    warmup_steps = None
-
-    if args.lr_scheduler == 'step':
+    if args.lr_scheduler == 'cosine':
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=args.epochs - args.warmup_epochs, eta_min=1e-6
+        )
+    elif args.lr_scheduler == 'step':
         scheduler = torch.optim.lr_scheduler.StepLR(
             optimizer, step_size=args.lr_step_size, gamma=args.lr_gamma
         )
-    elif args.lr_scheduler == 'cosine':
-        # Will be initialized after train_loader is built (needs steps/epoch).
-        pass
+    else:
+        scheduler = None
 
 
     def warmup_lr(optimizer, epoch, warmup_epochs, base_lr):
@@ -162,10 +144,8 @@ def main():
         print('=' * 60)
         print('Tuned Training Configuration:')
         print(f'  Pretrained backbone: {args.pretrained}')
-        print(f'  Batch size (per GPU): {args.batch_size}')
-        print(f'  Effective global batch: {effective_global_batch} ({world_size} GPUs)')
+        print(f'  Batch size: {args.batch_size}')
         print(f'  Learning rate: {args.lr}')
-        print(f'  Min learning rate: {args.min_lr}')
         print(f'  Momentum: {args.momentum}')
         print(f'  Weight decay: {args.weight_decay}')
         print(f'  LR scheduler: {args.lr_scheduler}')
@@ -216,22 +196,6 @@ def main():
     test_loader = torch.utils.data.DataLoader(dataset=data_test, sampler=test_sampler, batch_size=args.batch_size,
                                             shuffle=False, num_workers=4, pin_memory=True)
 
-    if args.lr_scheduler == 'cosine':
-        steps_per_epoch = max(1, len(train_loader))
-        total_train_steps = max(1, args.epochs * steps_per_epoch)
-        warmup_steps = max(0, args.warmup_epochs * steps_per_epoch)
-        min_lr_ratio = args.min_lr / args.lr if args.lr > 0 else 1.0
-
-        def cosine_with_warmup(step):
-            if warmup_steps > 0 and step < warmup_steps:
-                return float(step + 1) / float(warmup_steps)
-            progress = float(step - warmup_steps) / float(max(1, total_train_steps - warmup_steps))
-            progress = min(max(progress, 0.0), 1.0)
-            cosine_decay = 0.5 * (1.0 + math.cos(math.pi * progress))
-            return min_lr_ratio + (1.0 - min_lr_ratio) * cosine_decay
-
-        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=cosine_with_warmup)
-
 
     # ============================================================
     # Training loop with warmup + scheduler
@@ -243,25 +207,18 @@ def main():
     dist.barrier()
     t0 = time.time()
 
-    global_step = 0
     for epoch in range(0, args.epochs):
         train_sampler.set_epoch(epoch)
-
-        # Warmup phase for non-step-based schedulers
-        if args.lr_scheduler != 'cosine' and epoch < args.warmup_epochs:
+        
+        # Warmup phase
+        if epoch < args.warmup_epochs:
             warmup_lr(optimizer, epoch, args.warmup_epochs, args.lr)
 
         current_lr = optimizer.param_groups[0]['lr']
         if local_rank == 0:
             print(f'\nEpoch {epoch+1}/{args.epochs} | LR: {current_lr:.6f}')
 
-        if args.lr_scheduler == 'cosine' and scheduler is not None:
-            _, global_step = train_step(
-                train_loader, model, epoch, optimizer, criterion, args, device, local_rank,
-                scheduler=scheduler, global_step=global_step, return_global_step=True
-            )
-        else:
-            _ = train_step(train_loader, model, epoch, optimizer, criterion, args, device, local_rank)
+        _ = train_step(train_loader, model, epoch, optimizer, criterion, args, device, local_rank)
         validation_loss = validation_step(test_loader, model, criterion, device, local_rank)
 
         # Average validation loss across ranks
@@ -272,8 +229,8 @@ def main():
         if local_rank == 0:
             print('Current Loss: {}| Best Loss: {} at epoch: {}'.format(validation_loss, best_metric, best_iter))
 
-        # Step scheduler (epoch-based, after warmup)
-        if args.lr_scheduler == 'step' and epoch >= args.warmup_epochs and scheduler is not None:
+        # Step scheduler (after warmup)
+        if epoch >= args.warmup_epochs and scheduler is not None:
             scheduler.step()
 
         # Save best model
