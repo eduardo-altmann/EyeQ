@@ -55,7 +55,7 @@ def main():
     parser.add_argument('--epochs', default=60, type=int)
     parser.add_argument('--batch-size', default=4, type=int,
                         help='Increase from 4 to 16 for better gradient estimation')
-    parser.add_argument('--lr', default=0.001, type=float,
+    parser.add_argument('--lr', default=0.004, type=float,
                         help='Lower LR since we use pretrained weights (was 0.01)')
     parser.add_argument('--momentum', default=0.9, type=float,
                         help='SGD momentum (was missing)')
@@ -141,10 +141,14 @@ def main():
             param_group['lr'] = lr
 
     if local_rank==0:
+        num_gpus = dist.get_world_size()
+        global_batch_size = args.batch_size * num_gpus
         print('=' * 60)
         print('Tuned Training Configuration:')
         print(f'  Pretrained backbone: {args.pretrained}')
-        print(f'  Batch size: {args.batch_size}')
+        print(f'  Number of GPUs: {num_gpus}')
+        print(f'  Batch size per GPU: {args.batch_size}')
+        print(f'  Global batch size: {global_batch_size}')
         print(f'  Learning rate: {args.lr}')
         print(f'  Momentum: {args.momentum}')
         print(f'  Weight decay: {args.weight_decay}')
