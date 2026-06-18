@@ -67,7 +67,7 @@ def main():
     parser.add_argument('--lr_scheduler', type=str, default='cosine',
                         choices=['cosine', 'step', 'none'],
                         help='LR scheduler type')
-    parser.add_argument('--lr_step_size', default=20, type=int,
+    parser.add_argument('--lr_step_size', default=40, type=int,
                         help='Step size for StepLR scheduler')
     parser.add_argument('--lr_gamma', default=0.1, type=float,
                         help='Gamma for StepLR scheduler')
@@ -135,8 +135,9 @@ def main():
 
 
     def warmup_lr(optimizer, epoch, warmup_epochs, base_lr):
-        """Linear warmup: scale LR from base_lr/10 up to base_lr."""
-        lr = base_lr * (epoch + 1) / warmup_epochs
+        """Linear warmup: scale LR from 0.001 up to base_lr."""
+        start_lr = 0.001
+        lr = start_lr + (base_lr - start_lr) * (epoch + 1) / warmup_epochs
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
 
