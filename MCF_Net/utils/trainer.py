@@ -72,6 +72,9 @@ def validation_step(val_loader, model, criterion, device, local_rank):
     if local_rank == 0:
         bar = Bar('Processing {}'.format('validation'), max=iters_per_epoch)
 
+    all_predictions = torch.empty((0, 3), device=device)  # 3 classes
+    all_labels = torch.empty((0, 3), device=device)
+
     for step, (imagesA, imagesB, imagesC, labels) in enumerate(val_loader):
         start_time = time.time()
 
@@ -84,6 +87,8 @@ def validation_step(val_loader, model, criterion, device, local_rank):
             _, _, _, _, outputs = model(imagesA, imagesB, imagesC)
             loss = criterion(outputs, labels)
             epoch_loss += loss.item()
+            all_predictions = torch.cat((all_predictions, outputs), 0)
+            all_labels = torch.cat((all_labels, labels), 0)
 
         end_time = time.time()
 
@@ -97,7 +102,7 @@ def validation_step(val_loader, model, criterion, device, local_rank):
     epoch_loss = epoch_loss / iters_per_epoch
     if bar is not None:
         bar.finish()
-    return epoch_loss
+    return epoch_loss, all_predictions, all_labels
 
 
 def save_output(label_test_file, dataPRED, args, save_file, processed_images=None):
