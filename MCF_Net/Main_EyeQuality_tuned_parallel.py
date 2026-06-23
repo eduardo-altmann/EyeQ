@@ -235,7 +235,7 @@ def main():
         # Average validation loss across ranks
         val_loss_tensor = torch.tensor(validation_loss, device=device)
         dist.all_reduce(val_loss_tensor, op=dist.ReduceOp.SUM)
-        validation_loss = (val_loss_tensor / dist.get_world_size()).item()
+        validation_loss, val_predictions, val_labels = (val_loss_tensor / dist.get_world_size()).item()
         # Gather predictions and labels from all ranks (only on rank 0)
         if local_rank == 0:
             # Prepare lists to gather tensors from all ranks
