@@ -230,48 +230,36 @@ def main():
             print(f'\nEpoch {epoch+1}/{args.epochs} | LR: {current_lr:.6f}')
 
         train_loss = train_step(train_loader, model, epoch, optimizer, criterion, args, device, local_rank)
-        validation_loss = validation_step(test_loader, model, criterion, device, local_rank)
+        validation_loss, val_predictions, val_labels = validation_step(test_loader, model, criterion, device, local_rank)
 
         # Average validation loss across ranks
         val_loss_tensor = torch.tensor(validation_loss, device=device)
         dist.all_reduce(val_loss_tensor, op=dist.ReduceOp.SUM)
-        validation_loss, val_predictions, val_labels = (val_loss_tensor / dist.get_world_size()).item()
-        # Gather predictions and labels from all ranks (only on rank 0)
+        validation_loss = (val_loss_tensor / dist.get_world_size()).item()
+        
+        world_size = dist.get_world_size()
+        predictions_list = [torch.empty_like(val_predictions) for _ in range(world_size)]
+        labels_list = [torch.empty_like(val_labels) for _ in range(world_size)]
+        dist.all_gather(predictions_list, val_predictions)
+        dist.all_gather(labels_list, val_labels)
+
         if local_rank == 0:
-            # Prepare lists to gather tensors from all ranks
-            predictions_list = [torch.empty_like(val_predictions) for _ in range(dist.get_world_size())]
-            labels_list = [torch.empty_like(val_labels) for _ in range(dist.get_world_size())]
-            dist.all_gather(predictions_list, val_predictions)
-            dist.all_gather(labels_list, val_labels)
-            
-            # Concatenate all gathered tensors
+            print('Current Loss: {}| Best Loss: {} at epoch: {}'.format(validation_loss, best_metric, best_iter))
+ 
             all_val_predictions = torch.cat(predictions_list, dim=0)
             all_val_labels = torch.cat(labels_list, dim=0)
-            
-            # Convert to numpy for metric computation
+ 
             pred_np = all_val_predictions.cpu().numpy()
             labels_np = all_val_labels.cpu().numpy()
-            
-            # Convert probabilities to class predictions
-            pred_class = np.argmax(pred_np, axis=1)
-            labels_class = np.argmax(labels_np, axis=1)
-            
-            # Compute metrics using existing function
+ 
             label_list = args.label_idx
-            val_metrics = compute_metric(labels_class, pred_np, target_names=label_list)
-            
-            # Compute per-class metrics
+            val_metrics = compute_metric(np.argmax(labels_np, axis=1), pred_np, target_names=label_list)
+ 
             val_accuracy = np.mean(val_metrics['Accuracy'])
             val_f1_good = val_metrics['F1'][0]
             val_f1_usable = val_metrics['F1'][1]
             val_f1_reject = val_metrics['F1'][2]
-            val_sensitivity_reject = val_metrics['Sensitivity'][2]  # Sensibilidade para Reject
-        else:
-            # Non-rank 0 processes just do gather for all_reduce to work
-            dist.all_gather([None] * dist.get_world_size(), val_predictions)
-            dist.all_gather([None] * dist.get_world_size(), val_labels)
-        if local_rank == 0:
-            print('Current Loss: {}| Best Loss: {} at epoch: {}'.format(validation_loss, best_metric, best_iter))
+            val_sensitivity_reject = val_metrics['Sensitivity'][2]
 
         # Step scheduler (after warmup)
         if epoch >= args.warmup_epochs and scheduler is not None:
