@@ -64,6 +64,7 @@ figure/
 EyeQ_preprocess/test
 EyeQ_preprocess/train
 EyeQ_preprocess/original_img
+MCF_Net/runs
 
 # Misc
 *.egg
