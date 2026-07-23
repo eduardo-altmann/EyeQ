@@ -32,7 +32,12 @@ def objective(trial):
                 return float(line.split(":")[1])
     raise optuna.exceptions.TrialPruned()
 
-study = optuna.create_study(direction="minimize", storage="sqlite:///optuna_study.db", study_name="eyeq_tuning")
+study = optuna.create_study(
+    direction="minimize",
+    storage="sqlite:///optuna_study.db",
+    study_name="eyeq_tuning",
+    load_if_exists=True,
+)
 study.optimize(objective, n_trials=12)
 
 print(study.best_params)
