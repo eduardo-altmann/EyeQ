@@ -370,6 +370,7 @@ def main():
         print('=' * 60)
 
         with open(os.path.join(args.model_dir, args.save_model + '_metrics.txt'), 'w') as f:
+            f.write(f"Best_Val_Loss: {best_metric:.6f}\n")
             f.write(f"Accuracy    : {np.mean(tmp_report['Accuracy']):.4f}\n")
             f.write(f"Precision   : {np.mean(tmp_report['Precision']):.4f}\n")
             f.write(f"Sensitivity : {np.mean(tmp_report['Sensitivity']):.4f}\n")
