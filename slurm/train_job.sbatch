@@ -15,6 +15,7 @@ if [ -z "${RUN_ID:-}" ]; then
 fi
 
 RESULTS_DIR=/home/users/eadbem/eyeq/results/optuna/${RUN_ID}
+LOGS_DIR=/ssd2/eadbem/thiago/EyeQ/optuna/${RUN_ID}
 echo "=== Execução RUN_ID=${RUN_ID} ==="
 echo "Resultados serão salvos em: ${RESULTS_DIR}"
 
@@ -46,6 +47,16 @@ kill "$TB_PID" "$DASH_PID" 2>/dev/null
 
 rsync -avz result/ "${RESULTS_DIR}/training/"
 rsync -avz optuna_study.db "${RESULTS_DIR}/training/"
-sleep 15
+rsync -avz runs/ "${RESULTS_DIR}/training/runs/"
 
 echo "=== Execução RUN_ID=${RUN_ID} finalizada ==="
+
+# ---------- Logs do SLURM ----------
+# Pequeno sleep para dar tempo do SO liberar/gravar o restante do buffer
+# do .out/.err antes de lermos o arquivo. Mesmo assim, como o job ainda
+# está rodando, as últimas linhas (incluindo esta) podem ficar de fora
+# da cópia levada para a home — rode o rsync manualmente depois se precisar
+# do log 100% completo.
+sleep 15
+rsync -avz "${LOGS_DIR}/" "${RESULTS_DIR}/logs/"
+sleep 15

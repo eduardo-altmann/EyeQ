@@ -64,8 +64,11 @@ figure/
 EyeQ_preprocess/test
 EyeQ_preprocess/train
 EyeQ_preprocess/original_img
-MCF_Net/runs
+EyeQ_preprocess/metrics/
+MCF_Net/runs/
+
+# Logs de execução do SLURM (stdout/stderr), versionados na home via submit_experiment.sh
+optuna/
 
 # Misc
 *.egg
-

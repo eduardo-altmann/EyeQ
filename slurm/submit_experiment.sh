@@ -37,6 +37,7 @@ echo "Nova execução: RUN_ID=${RUN_ID}"
 
 mkdir -p "${BASE_RESULTS}/${RUN_ID}/preprocess"
 mkdir -p "${BASE_RESULTS}/${RUN_ID}/training"
+mkdir -p "${BASE_RESULTS}/${RUN_ID}/logs"
 mkdir -p "${BASE_LOGS}/${RUN_ID}"
 
 sbatch \
