@@ -34,7 +34,11 @@ def objective(trial):
         "--warmup_epochs", str(warmup_epochs),
         "--epochs", str(args.epochs),
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)  # ex: 1h de folga
+    except subprocess.TimeoutExpired:
+        print(f"Trial {trial.number} excedeu o timeout — matando e marcando como pruned.")
+        raise optuna.exceptions.TrialPruned()
     if result.returncode != 0:
         print(result.stderr)
         raise optuna.exceptions.TrialPruned()
@@ -43,11 +47,23 @@ def objective(trial):
     if not os.path.exists(metrics_path):
         raise optuna.exceptions.TrialPruned()
 
+    # ler todas as métricas do arquivo, não só a loss
+    val_loss = None
     with open(metrics_path) as f:
         for line in f:
             if line.startswith("Best_Val_Loss"):
-                return float(line.split(":")[1])
-    raise optuna.exceptions.TrialPruned()
+                val_loss = float(line.split(":")[1])
+            elif line.startswith("Accuracy"):
+                trial.set_user_attr("accuracy", float(line.split(":")[1]))
+            elif line.startswith("Precision"):
+                trial.set_user_attr("precision", float(line.split(":")[1]))
+            elif line.startswith("F1"):
+                trial.set_user_attr("f1", float(line.split(":")[1]))
+
+    if val_loss is None:
+        raise optuna.exceptions.TrialPruned()
+
+    return val_loss
 
 study = optuna.create_study(
     direction="minimize",
@@ -57,6 +73,14 @@ study = optuna.create_study(
 )
 study.optimize(objective, n_trials=args.n_trials)
 
-print(study.best_params)
-print(study.best_value)
-study.trials_dataframe().to_csv("optuna_results.csv", index=False)
+df = study.trials_dataframe()
+# colunas viram user_attrs_accuracy, user_attrs_precision, user_attrs_f1
+print(df[['number', 'value', 'user_attrs_accuracy']].sort_values('user_attrs_accuracy', ascending=False))
+
+if len(study.trials_dataframe(attrs=("state",)).query("state == 'COMPLETE'")) > 0:
+    print(study.best_params)
+    print(study.best_value)
+else:
+    print("Nenhum trial completou — confira os PRUNED antes de prosseguir.")
+    
+df.to_csv("optuna_results.csv", index=False)  # em vez de study.trials_dataframe().to_csv(...)
