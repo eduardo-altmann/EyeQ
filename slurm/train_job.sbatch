@@ -40,7 +40,7 @@ TB_PID=$!
 uv run optuna-dashboard sqlite:///optuna_study.db --host 143.54.85.24 --port 8080 &
 DASH_PID=$!
 
-uv run optuna_driver.py
+uv run optuna_driver.py --n_gpus 4 --n_trials 6 --epochs 25
 
 # Encerra os dashboards (senão ficam pendurados após o job acabar)
 kill "$TB_PID" "$DASH_PID" 2>/dev/null
