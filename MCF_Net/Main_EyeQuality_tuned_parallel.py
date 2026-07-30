@@ -61,6 +61,7 @@ def main():
     parser.add_argument('--epochs', default=60, type=int)
     parser.add_argument('--batch-size', default=4, type=int,
                         help='Increase from 4 to 16 for better gradient estimation')
+    parser.add_argument('--batch_size_ref', type=int, default=4)
     parser.add_argument('--lr', default=0.004, type=float,
                         help='Lower LR since we use pretrained weights (was 0.01)')
     parser.add_argument('--momentum', default=0.9, type=float,
@@ -115,11 +116,18 @@ def main():
     criterion = torch.nn.BCELoss(reduction='mean')
 
     # ============================================================
+    # Linear scaling rule
+    # ============================================================
+    num_gpus = dist.get_world_size()
+    global_batch_size = args.batch_size * num_gpus
+    effective_lr = args.lr * (global_batch_size / args.batch_size_ref)
+
+    # ============================================================
     # Optimizer - with momentum and weight decay
     # ============================================================
     optimizer = torch.optim.SGD(
         model.parameters(),
-        lr=args.lr,
+        lr=effective_lr,
         momentum=args.momentum,
         weight_decay=args.weight_decay,
         nesterov=True
@@ -148,8 +156,6 @@ def main():
             param_group['lr'] = lr
 
     if local_rank==0:
-        num_gpus = dist.get_world_size()
-        global_batch_size = args.batch_size * num_gpus
         print('=' * 60)
         print('Tuned Training Configuration:')
         print(f'  Pretrained backbone: {args.pretrained}')
@@ -223,7 +229,7 @@ def main():
         
         # Warmup phase
         if epoch < args.warmup_epochs:
-            warmup_lr(optimizer, epoch, args.warmup_epochs, args.lr)
+            warmup_lr(optimizer, epoch, args.warmup_epochs, effective_lr)
 
         current_lr = optimizer.param_groups[0]['lr']
         if local_rank == 0:
