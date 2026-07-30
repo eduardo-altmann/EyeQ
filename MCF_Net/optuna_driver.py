@@ -21,6 +21,7 @@ def objective(trial):
     weight_decay = trial.suggest_float('weight_decay', 1e-6, 1e-3, log=True)
     lr_scheduler = trial.suggest_categorical('lr_scheduler', ['cosine', 'step'])
     warmup_epochs = trial.suggest_int('warmup_epochs', 3, 7)
+    momentum = trial.suggest_float('momentum', 0.8, 0.99)
 
     tag = f"trial_{trial.number}"
     cmd = [
@@ -31,6 +32,7 @@ def objective(trial):
         "--batch-size", str(batch_size),
         "--weight_decay", str(weight_decay),
         "--lr_scheduler", lr_scheduler,
+        "--momentum", str(momentum),
         "--warmup_epochs", str(warmup_epochs),
         "--epochs", str(args.epochs),
     ]
