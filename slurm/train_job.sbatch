@@ -47,6 +47,7 @@ kill "$TB_PID" "$DASH_PID" 2>/dev/null
 
 rsync -avz result/ "${RESULTS_DIR}/training/"
 rsync -avz optuna_study.db "${RESULTS_DIR}/training/"
+rsync -avz optuna_results.csv "${RESULTS_DIR}/training/"
 rsync -avz runs/ "${RESULTS_DIR}/training/runs/"
 
 echo "=== Execução RUN_ID=${RUN_ID} finalizada ==="

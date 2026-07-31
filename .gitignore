@@ -72,3 +72,5 @@ optuna/
 
 # Misc
 *.egg
+
+optuna_results.csv
