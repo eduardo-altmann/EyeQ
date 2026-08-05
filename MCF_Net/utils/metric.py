@@ -1,5 +1,8 @@
 import numpy as np
-from sklearn.metrics import f1_score, confusion_matrix, roc_curve, roc_auc_score, accuracy_score
+from sklearn.metrics import (
+    f1_score, confusion_matrix, roc_curve, roc_auc_score, accuracy_score,
+    cohen_kappa_score,
+)
 
 
 def compute_metric(datanpGT, datanpPRED, target_names):
@@ -36,7 +39,9 @@ def compute_metric(datanpGT, datanpPRED, target_names):
     output = {
         'class_name': target_names,
         'F1': F1_metric,
+        'macro-F1': float(np.mean(F1_metric)),
         'AUC': mAUC / 3,
+        'Kappa': cohen_kappa_score(datanpGT, argmaxPRED, weights='quadratic'),
         'Accuracy': Accuracy_score,
 
         'Sensitivity': tp / (tp + fn),
