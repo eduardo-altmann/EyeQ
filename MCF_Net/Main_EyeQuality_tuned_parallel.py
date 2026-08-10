@@ -140,7 +140,7 @@ def main():
     model.to(device)
     if args.sync_bn:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-    model = DDP(model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=False)
+    model = DDP(model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=True)
 
     criterion = torch.nn.BCELoss(reduction='mean')
     num_gpus = dist.get_world_size()
