@@ -76,11 +76,11 @@ srun --ntasks-per-node=1 bash -c '
         --rdzv_backend=c10d \
         --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT \
         Main_EyeQuality_tuned_parallel.py \
-        --lr 0.004 \
-        --batch-size 4 \
-        --weight_decay 1e-4 \
+        --lr 0.00837248326772002 \
+        --batch-size 8 \
+        --weight_decay 1.3866006245078523e-05 \
         --lr_scheduler cosine \
-        --momentum 0.9 \
+        --momentum 0.8007658696453809 \
         --warmup_epochs 5 \
         --epochs 60
 
