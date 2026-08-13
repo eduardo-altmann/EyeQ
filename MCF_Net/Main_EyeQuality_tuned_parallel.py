@@ -48,6 +48,7 @@ def cleanup_ddp():
 
 def main():
     local_rank = setup_ddp()
+    rank = dist.get_rank()  # rank GLOBAL (unico entre todos os nos) - usar para logica de "sou o master"
     device = torch.device(f"cuda:{local_rank}")
 
     np.random.seed(0)
@@ -56,7 +57,7 @@ def main():
 
     from torch.utils.tensorboard import SummaryWriter
     writer = None
-    if local_rank == 0:
+    if rank == 0:
         writer = SummaryWriter()
 
     data_root = '../EyeQ_preprocess/'
@@ -135,7 +136,7 @@ def main():
         loaded_model = torch.load(os.path.join(args.model_dir, args.pre_model + '.tar'))
         model.load_state_dict(loaded_model['state_dict'])
 
-        if local_rank==0: print(f'Loaded pretrained model: {args.pre_model}')
+        if rank==0: print(f'Loaded pretrained model: {args.pre_model}')
 
     model.to(device)
     if args.sync_bn:
@@ -175,7 +176,7 @@ def main():
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
 
-    if local_rank==0:
+    if rank==0:
         print('=' * 60)
         print('Tuned Training Configuration:')
         print(f'  Mode: {"TUNING (val-based, no test)" if args.tuning else "FINAL (test eval)"}')
@@ -258,7 +259,7 @@ def main():
         class_weights = None
 
 
-    if local_rank==0:
+    if rank==0:
         print(f'\nTrain split: {len(data_train)} images | Val split: {len(data_val)} images')
         print(f'Test set (held out): {len(data_test)} images\n')
 
@@ -272,7 +273,7 @@ def main():
             warmup_lr(optimizer, epoch, args.warmup_epochs, effective_lr)
 
         current_lr = optimizer.param_groups[0]['lr']
-        if local_rank == 0:
+        if rank == 0:
             print(f'\nEpoch {epoch+1}/{args.epochs} | LR: {current_lr:.6f}')
 
         train_loss = train_step(train_loader, model, epoch, optimizer, criterion, args, device, local_rank)
@@ -288,7 +289,7 @@ def main():
         dist.all_gather(predictions_list, val_predictions)
         dist.all_gather(labels_list, val_labels)
 
-        if local_rank == 0:
+        if rank == 0:
             all_val_predictions = torch.cat(predictions_list, dim=0)
             all_val_labels = torch.cat(labels_list, dim=0)
 
@@ -314,7 +315,7 @@ def main():
         if epoch >= args.warmup_epochs and scheduler is not None:
             scheduler.step()
 
-        if local_rank == 0 and score > best_score:
+        if rank == 0 and score > best_score:
             best_score = score
             best_val_loss = validation_loss
             best_iter = epoch
@@ -327,7 +328,7 @@ def main():
                         'selection_metric': args.selection_metric}, model_save_file)
             print('Model saved to %s' % model_save_file)
 
-        if local_rank == 0 and args.progress_file is not None:
+        if rank == 0 and args.progress_file is not None:
             with open(args.progress_file, 'a') as pf:
                 pf.write(json.dumps({
                     'epoch': epoch,
@@ -339,7 +340,7 @@ def main():
                     'best_score': float(best_score),
                 }) + '\n')
 
-        if local_rank == 0 and writer is not None:
+        if rank == 0 and writer is not None:
             writer.add_scalar("Loss/train", train_loss, epoch)
             writer.add_scalar("Loss/validation", validation_loss, epoch)
             writer.add_scalar("Learning_Rate", current_lr, epoch)
@@ -355,7 +356,7 @@ def main():
 
     dist.barrier()
     training_time = time.time() - t0
-    if local_rank == 0:
+    if rank == 0:
         print(f'\nTraining complete. Best {args.selection_metric} score: {best_score:.4f} '
               f'(val_loss {best_val_loss:.4f}) at epoch {best_iter+1}')
         print(f'Training time: {training_time:.2f} seconds')
@@ -363,7 +364,7 @@ def main():
             writer.flush()
             writer.close()
 
-    if local_rank == 0 and args.tuning:
+    if rank == 0 and args.tuning:
         metrics_path = os.path.join(args.model_dir, args.save_model + '_metrics.txt')
         with open(metrics_path, 'w') as f:
             f.write(f"Objective: {best_score:.6f}\n")
@@ -375,7 +376,7 @@ def main():
             f.write(f"Training Time: {training_time:.1f}s\n")
         print(f'[TUNING] Objective ({args.selection_metric}) = {best_score:.6f} written to {metrics_path}')
 
-    if local_rank == 0 and not args.tuning:
+    if rank == 0 and not args.tuning:
         best_model_path = os.path.join(args.model_dir, args.save_model + '.tar')
         eval_model = dense121_mcs(n_class=args.n_classes, pretrained=args.pretrained)
         eval_model.to(device)
