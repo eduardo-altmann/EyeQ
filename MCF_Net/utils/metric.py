@@ -14,6 +14,7 @@ def compute_metric(datanpGT, datanpPRED, target_names):
     fp = np.zeros([n_class, 1])
     fn = np.zeros([n_class, 1])
     tp = np.zeros([n_class, 1])
+    AUC_per_class = np.zeros([n_class, 1])
 
     Accuracy_score = accuracy_score(datanpGT, argmaxPRED)
     ROC_curve = {}
@@ -25,6 +26,7 @@ def compute_metric(datanpGT, datanpPRED, target_names):
         F1_metric[i] = f1_score(tmp_label, tmp_pred)
         tn[i], fp[i], fn[i], tp[i] = confusion_matrix(tmp_label, tmp_pred).ravel()
         outAUROC = roc_auc_score(tmp_label, datanpPRED[:, i])
+        AUC_per_class[i] = outAUROC
 
         mAUC = mAUC + outAUROC
         [roc_fpr, roc_tpr, roc_thresholds] = roc_curve(tmp_label, datanpPRED[:, i])
@@ -36,13 +38,20 @@ def compute_metric(datanpGT, datanpPRED, target_names):
 
     mPrecision = sum(tp) / sum(tp + fp)
     mRecall = sum(tp) / sum(tp + fn)
+
+    # Per-class (one-vs-rest) accuracy, e.g. accuracy of the Good/Usable/Reject
+    # class treated as a binary "is this class or not" problem.
+    Accuracy_per_class = (tp + tn) / (tp + tn + fp + fn)
+
     output = {
         'class_name': target_names,
         'F1': F1_metric,
         'macro-F1': float(np.mean(F1_metric)),
-        'AUC': mAUC / 3,
+        'AUC': float(np.mean(AUC_per_class)),
+        'AUC_per_class': AUC_per_class,
         'Kappa': cohen_kappa_score(datanpGT, argmaxPRED, weights='quadratic'),
         'Accuracy': Accuracy_score,
+        'Accuracy_per_class': Accuracy_per_class,
 
         'Sensitivity': tp / (tp + fn),
         'Precision': tp / (tp + fp),

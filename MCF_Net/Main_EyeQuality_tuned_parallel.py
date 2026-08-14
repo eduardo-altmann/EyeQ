@@ -303,7 +303,22 @@ def main():
             val_f1_good = val_metrics['F1'][0]
             val_f1_usable = val_metrics['F1'][1]
             val_f1_reject = val_metrics['F1'][2]
+
+            val_accuracy_good = val_metrics['Accuracy_per_class'][0]
+            val_accuracy_usable = val_metrics['Accuracy_per_class'][1]
+            val_accuracy_reject = val_metrics['Accuracy_per_class'][2]
+
+            val_precision_good = val_metrics['Precision'][0]
+            val_precision_usable = val_metrics['Precision'][1]
+            val_precision_reject = val_metrics['Precision'][2]
+
+            val_sensitivity_good = val_metrics['Sensitivity'][0]
+            val_sensitivity_usable = val_metrics['Sensitivity'][1]
             val_sensitivity_reject = val_metrics['Sensitivity'][2]
+
+            val_auc_good = val_metrics['AUC_per_class'][0]
+            val_auc_usable = val_metrics['AUC_per_class'][1]
+            val_auc_reject = val_metrics['AUC_per_class'][2]
 
             score = selection_value(val_metrics, validation_loss, args.selection_metric)
             print('Epoch {} | val_loss={:.4f} kappa={:.4f} macroF1={:.4f} AUC={:.4f} | '
@@ -348,10 +363,29 @@ def main():
             writer.add_scalar("Kappa/validation", val_metrics['Kappa'], epoch)
 
             writer.add_scalar("Accuracy/validation", val_accuracy, epoch)
+            writer.add_scalar("Accuracy/Good", val_accuracy_good, epoch)
+            writer.add_scalar("Accuracy/Usable", val_accuracy_usable, epoch)
+            writer.add_scalar("Accuracy/Reject", val_accuracy_reject, epoch)
+
             writer.add_scalar("F1/Good", val_f1_good, epoch)
             writer.add_scalar("F1/Usable", val_f1_usable, epoch)
             writer.add_scalar("F1/Reject", val_f1_reject, epoch)
+            writer.add_scalar("F1/macro", val_metrics['macro-F1'], epoch)
+
+            writer.add_scalar("Precision/Good", val_precision_good, epoch)
+            writer.add_scalar("Precision/Usable", val_precision_usable, epoch)
+            writer.add_scalar("Precision/Reject", val_precision_reject, epoch)
+            writer.add_scalar("Precision/micro", val_metrics['micro-Precision'], epoch)
+
+            writer.add_scalar("Sensitivity/Good", val_sensitivity_good, epoch)
+            writer.add_scalar("Sensitivity/Usable", val_sensitivity_usable, epoch)
             writer.add_scalar("Sensitivity/Reject", val_sensitivity_reject, epoch)
+            writer.add_scalar("Sensitivity/micro", val_metrics['micro-Sensitivity'], epoch)
+
+            writer.add_scalar("AUC/Good", val_auc_good, epoch)
+            writer.add_scalar("AUC/Usable", val_auc_usable, epoch)
+            writer.add_scalar("AUC/Reject", val_auc_reject, epoch)
+            writer.add_scalar("AUC/macro", val_metrics['AUC'], epoch)
             writer.flush()
 
     dist.barrier()
@@ -442,6 +476,17 @@ def main():
               ' F1: ' + str("{:0.4f}".format(np.mean(tmp_report['F1']))) +
               ' AUC: ' + str("{:0.4f}".format(np.mean(tmp_report['AUC']))) +
               ' Kappa: ' + str("{:0.4f}".format(tmp_report['Kappa'])))
+        print('-' * 60)
+        print('Per-class breakdown:')
+        for idx, cls_name in enumerate(label_list):
+            print('  {:8s} | Accuracy: {:.4f} | Precision: {:.4f} | Recall: {:.4f} | F1: {:.4f} | AUC: {:.4f}'.format(
+                cls_name,
+                float(tmp_report['Accuracy_per_class'][idx]),
+                float(tmp_report['Precision'][idx]),
+                float(tmp_report['Sensitivity'][idx]),
+                float(tmp_report['F1'][idx]),
+                float(tmp_report['AUC_per_class'][idx]),
+            ))
         print('=' * 60)
 
         with open(os.path.join(args.model_dir, args.save_model + '_metrics.txt'), 'w') as f:
@@ -458,6 +503,18 @@ def main():
             f.write(f"AUC         : {np.mean(tmp_report['AUC']):.4f}\n")
             f.write(f"Kappa       : {tmp_report['Kappa']:.4f}\n")
             f.write(f"Training Time: {training_time:.1f}s\n")
+            f.write("\nPer-class breakdown:\n")
+            for idx, cls_name in enumerate(label_list):
+                f.write(
+                    "  {:8s} | Accuracy: {:.4f} | Precision: {:.4f} | Recall: {:.4f} | F1: {:.4f} | AUC: {:.4f}\n".format(
+                        cls_name,
+                        float(tmp_report['Accuracy_per_class'][idx]),
+                        float(tmp_report['Precision'][idx]),
+                        float(tmp_report['Sensitivity'][idx]),
+                        float(tmp_report['F1'][idx]),
+                        float(tmp_report['AUC_per_class'][idx]),
+                    )
+                )
 
     cleanup_ddp()
 
