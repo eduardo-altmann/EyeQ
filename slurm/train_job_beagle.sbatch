@@ -35,9 +35,8 @@ cd /scratch/eadbem/EyeQ/MCF_Net
 uv run tensorboard --logdir runs --host 143.54.48.137 --port 8080 &
 TB_PID=$!
 
-uv run torchrun \
+uv run torchrun --nproc_per_node=2 \
     Main_EyeQuality_tuned_parallel.py \
-    --nproc_per_node=2 \
     --lr 0.00837248326772002 \
     --batch-size 8 \
     --weight_decay 1.3866006245078523e-05 \
