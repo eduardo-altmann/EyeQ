@@ -1,4 +1,5 @@
 #!/bin/bash
+#SBATCH --partition=poti
 #SBATCH --nodelist=poti5
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
