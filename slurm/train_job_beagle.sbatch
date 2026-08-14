@@ -32,7 +32,7 @@ git pull
 echo "Iniciando o treinamento..."
 cd /scratch/eadbem/EyeQ/MCF_Net
 
-uv run tensorboard --logdir runs --host 192.168.30.51 --port 8080 &
+uv run tensorboard --logdir runs --host 143.54.48.137 --port 8080 &
 TB_PID=$!
 
 uv run torchrun \
