@@ -19,7 +19,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 from torch.utils.data.distributed import DistributedSampler
 from torch.utils.data import Subset
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import StratifiedGroupKFold
 
 
 def set_seed(seed):
@@ -36,6 +36,43 @@ def selection_value(metrics, validation_loss, name):
     if name == 'auc':
         return float(np.mean(metrics['AUC']))
     return -float(validation_loss)
+
+def patient_id(image_name):
+    stem = os.path.splitext(os.path.basename(image_name))[0]
+    for suffix in ('_left', '_right'):
+        if stem.endswith(suffix):
+            return stem[:-len(suffix)]
+    return stem
+
+def grouped_train_val_split(labels, image_names, val_split, seed):
+    if not 0 < val_split <= 0.5:
+        raise ValueError('--val_split must be greater than 0 and at most 0.5')
+
+    groups = np.array([patient_id(name) for name in image_names])
+    n_splits = max(2, round(1.0 / val_split))
+    splitter = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+    target_size = len(labels) * val_split
+    target_distribution = np.bincount(labels) / len(labels)
+
+    candidates = splitter.split(np.zeros(len(labels)), labels, groups)
+    train_idx, val_idx = min(
+        candidates,
+        key=lambda split: (
+            abs(len(split[1]) - target_size) / len(labels)
+            + np.abs(
+                np.bincount(labels[split[1]], minlength=len(target_distribution))
+                / len(split[1])
+                - target_distribution
+            ).sum()
+        )
+    )
+
+    train_groups = set(groups[train_idx])
+    val_groups = set(groups[val_idx])
+    if train_groups.intersection(val_groups):
+        raise RuntimeError('Patient overlap detected between train and validation splits')
+
+    return train_idx, val_idx
 
 def setup_ddp():
     dist.init_process_group(backend="nccl")
@@ -226,9 +263,8 @@ def main():
                                         n_class=args.n_classes, set_name='val')
 
     labels_int = np.array([int(np.argmax(np.asarray(l))) for l in data_train_aug.labels])
-    all_idx = np.arange(len(labels_int))
-    train_idx, val_idx = train_test_split(
-        all_idx, test_size=args.val_split, random_state=args.seed, stratify=labels_int
+    train_idx, val_idx = grouped_train_val_split(
+        labels_int, data_train_aug.csv_image_names, args.val_split, args.seed
     )
 
     data_train = Subset(data_train_aug, train_idx)
