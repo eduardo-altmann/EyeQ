@@ -20,7 +20,9 @@ def load_eyeQ_excel(data_dir, list_file, n_class=3):
 
     for idx in range(img_num):
         image_name = df_tmp["image"][idx]
-        image_path = os.path.join(data_dir, image_name[:-5] + '.png')
+        source = str(df_tmp["source"][idx]) if "source" in df_tmp.columns else None
+        png_name = os.path.splitext(image_name)[0] + '.png'
+        image_path = os.path.join(data_dir, source, png_name) if source else os.path.join(data_dir, png_name)
         
         # Check if image file exists
         if not os.path.exists(image_path):

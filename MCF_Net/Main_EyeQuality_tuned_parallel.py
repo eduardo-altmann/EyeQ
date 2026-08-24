@@ -18,8 +18,6 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 from torch.utils.data.distributed import DistributedSampler
-from torch.utils.data import Subset
-from sklearn.model_selection import StratifiedGroupKFold
 
 
 def set_seed(seed):
@@ -36,43 +34,6 @@ def selection_value(metrics, validation_loss, name):
     if name == 'auc':
         return float(np.mean(metrics['AUC']))
     return -float(validation_loss)
-
-def patient_id(image_name):
-    stem = os.path.splitext(os.path.basename(image_name))[0]
-    for suffix in ('_left', '_right'):
-        if stem.endswith(suffix):
-            return stem[:-len(suffix)]
-    return stem
-
-def grouped_train_val_split(labels, image_names, val_split, seed):
-    if not 0 < val_split <= 0.5:
-        raise ValueError('--val_split must be greater than 0 and at most 0.5')
-
-    groups = np.array([patient_id(name) for name in image_names])
-    n_splits = max(2, round(1.0 / val_split))
-    splitter = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=seed)
-    target_size = len(labels) * val_split
-    target_distribution = np.bincount(labels) / len(labels)
-
-    candidates = splitter.split(np.zeros(len(labels)), labels, groups)
-    train_idx, val_idx = min(
-        candidates,
-        key=lambda split: (
-            abs(len(split[1]) - target_size) / len(labels)
-            + np.abs(
-                np.bincount(labels[split[1]], minlength=len(target_distribution))
-                / len(split[1])
-                - target_distribution
-            ).sum()
-        )
-    )
-
-    train_groups = set(groups[train_idx])
-    val_groups = set(groups[val_idx])
-    if train_groups.intersection(val_groups):
-        raise RuntimeError('Patient overlap detected between train and validation splits')
-
-    return train_idx, val_idx
 
 def setup_ddp():
     dist.init_process_group(backend="nccl")
@@ -131,11 +92,13 @@ def main():
                         help='Use ImageNet pretrained DenseNet121 backbone')
     parser.add_argument('--seed', type=int, default=0,
                         help='Global RNG seed; vary it to report mean +/- std over runs')
+    parser.add_argument('--data_protocol', type=str, default='official',
+                        choices=['official', 'patient_stratified'],
+                        help='official: original train/test split with no validation; '
+                            'patient_stratified: fixed patient-grouped 80/10/10 manifests')
     parser.add_argument('--tuning', action='store_true', default=False,
                         help='Tuning mode: select on a held-out validation split and '
                              'NEVER touch the test set (avoids test-set leakage during HPO)')
-    parser.add_argument('--val_split', type=float, default=0.1,
-                        help='Fraction of the training set held out (stratified) for validation')
     parser.add_argument('--selection_metric', type=str, default='kappa',
                         choices=['kappa', 'macro_f1', 'auc', 'loss'],
                         help='Metric used for best-epoch model selection and the Optuna objective')
@@ -153,12 +116,38 @@ def main():
 
     args = parser.parse_args()
 
+    if args.data_protocol == 'official' and args.tuning:
+        raise ValueError(
+            'Tuning requires validation; use --data_protocol patient_stratified. '
+            'The official protocol reserves its test set for one final evaluation.'
+        )
+
     set_seed(args.seed)
 
-    train_images_dir = data_root + '/train'
-    label_train_file = '../data/Label_EyeQ_train.filtered.csv'
-    test_images_dir = data_root + '/test'
-    label_test_file = '../data/Label_EyeQ_test.filtered.csv'
+    if args.data_protocol == 'official':
+        train_images_dir = os.path.join(data_root, 'train')
+        val_images_dir = None
+        test_images_dir = os.path.join(data_root, 'test')
+        label_train_file = '../data/Label_EyeQ_train.filtered.csv'
+        label_val_file = None
+        label_test_file = '../data/Label_EyeQ_test.filtered.csv'
+    else:
+        train_images_dir = data_root
+        val_images_dir = data_root
+        test_images_dir = data_root
+        label_train_file = '../data/Label_EyeQ_patient_stratified_train.csv'
+        label_val_file = '../data/Label_EyeQ_patient_stratified_validation.csv'
+        label_test_file = '../data/Label_EyeQ_patient_stratified_test.csv'
+        missing_manifests = [
+            path for path in (label_train_file, label_val_file, label_test_file)
+            if not os.path.exists(path)
+        ]
+        if missing_manifests:
+            raise FileNotFoundError(
+                'Missing patient-stratified manifests. Run '
+                'EyeQ_preprocess/create_patient_stratified_splits.py first: '
+                + ', '.join(missing_manifests)
+            )
 
     save_file_name = args.model_dir + args.save_model + '.csv'
 
@@ -171,6 +160,11 @@ def main():
 
     if args.pre_model is not None:
         loaded_model = torch.load(os.path.join(args.model_dir, args.pre_model + '.tar'))
+        checkpoint_protocol = loaded_model.get('data_protocol')
+        if checkpoint_protocol is not None and checkpoint_protocol != args.data_protocol:
+            raise ValueError(
+                f'Checkpoint protocol is {checkpoint_protocol}, requested {args.data_protocol}'
+            )
         model.load_state_dict(loaded_model['state_dict'])
 
         if rank==0: print(f'Loaded pretrained model: {args.pre_model}')
@@ -217,6 +211,7 @@ def main():
         print('=' * 60)
         print('Tuned Training Configuration:')
         print(f'  Mode: {"TUNING (val-based, no test)" if args.tuning else "FINAL (test eval)"}')
+        print(f'  Data protocol: {args.data_protocol}')
         print(f'  Seed: {args.seed}')
         print(f'  Selection metric: {args.selection_metric}')
         print(f'  Pretrained backbone: {args.pretrained}')
@@ -258,17 +253,16 @@ def main():
     data_train_aug = DatasetGenerator(data_dir=train_images_dir, list_file=label_train_file,
                                       transform1=transform_list1, transform2=transformList2,
                                       n_class=args.n_classes, set_name='train')
-    data_train_plain = DatasetGenerator(data_dir=train_images_dir, list_file=label_train_file,
-                                        transform1=transform_list_val1, transform2=transformList2,
-                                        n_class=args.n_classes, set_name='val')
-
     labels_int = np.array([int(np.argmax(np.asarray(l))) for l in data_train_aug.labels])
-    train_idx, val_idx = grouped_train_val_split(
-        labels_int, data_train_aug.csv_image_names, args.val_split, args.seed
-    )
+    train_idx = np.arange(len(data_train_aug))
+    data_train = data_train_aug
 
-    data_train = Subset(data_train_aug, train_idx)
-    data_val = Subset(data_train_plain, val_idx)
+    if args.data_protocol == 'official':
+        data_val = None
+    else:
+        data_val = DatasetGenerator(data_dir=val_images_dir, list_file=label_val_file,
+                                    transform1=transform_list_val1, transform2=transformList2,
+                                    n_class=args.n_classes, set_name='val')
 
     train_sampler = DistributedSampler(data_train, shuffle=True)
     train_loader = torch.utils.data.DataLoader(dataset=data_train,
@@ -278,13 +272,19 @@ def main():
                                                pin_memory=True
                                                )
 
-    val_sampler = DistributedSampler(data_val, shuffle=False, drop_last=False)
-    val_loader = torch.utils.data.DataLoader(dataset=data_val, sampler=val_sampler,
-                                             batch_size=args.batch_size, shuffle=False,
-                                             num_workers=4, pin_memory=True)
+    if data_val is not None:
+        val_sampler = DistributedSampler(data_val, shuffle=False, drop_last=False)
+        val_loader = torch.utils.data.DataLoader(dataset=data_val, sampler=val_sampler,
+                                                 batch_size=args.batch_size, shuffle=False,
+                                                 num_workers=4, pin_memory=True)
+    else:
+        val_loader = None
 
-    data_test = DatasetGenerator(data_dir=test_images_dir, list_file=label_test_file, transform1=transform_list_val1,
-                                transform2=transformList2, n_class=args.n_classes, set_name='test')
+    data_test = None
+    if rank == 0 and not args.tuning:
+        data_test = DatasetGenerator(data_dir=test_images_dir, list_file=label_test_file,
+                                     transform1=transform_list_val1, transform2=transformList2,
+                                     n_class=args.n_classes, set_name='test')
 
     if args.class_weighted_loss:
         counts = np.bincount(labels_int[train_idx], minlength=args.n_classes).astype('float32')
@@ -296,8 +296,15 @@ def main():
 
 
     if rank==0:
-        print(f'\nTrain split: {len(data_train)} images | Val split: {len(data_val)} images')
-        print(f'Test set (held out): {len(data_test)} images\n')
+        if args.data_protocol == 'official':
+            print(f'\nTrain set: {len(data_train)} images | No validation set (official protocol)')
+            print(f'Test set (held out): {len(data_test)} images\n')
+        else:
+            print(f'\nTrain split: {len(data_train)} images | Val split: {len(data_val)} images')
+            if data_test is None:
+                print('Test set not loaded during tuning\n')
+            else:
+                print(f'Test set (held out): {len(data_test)} images\n')
 
     dist.barrier()
     t0 = time.time()
@@ -313,6 +320,27 @@ def main():
             print(f'\nEpoch {epoch+1}/{args.epochs} | LR: {current_lr:.6f}')
 
         train_loss = train_step(train_loader, model, epoch, optimizer, criterion, args, device, local_rank)
+
+        if val_loader is None:
+            if epoch >= args.warmup_epochs and scheduler is not None:
+                scheduler.step()
+
+            if rank == 0 and epoch == args.epochs - 1:
+                if not os.path.exists(args.model_dir):
+                    os.makedirs(args.model_dir)
+                model_save_file = os.path.join(args.model_dir, args.save_model + '.tar')
+                torch.save({
+                    'state_dict': model.module.state_dict(),
+                    'epoch': epoch + 1,
+                    'data_protocol': args.data_protocol,
+                }, model_save_file)
+                print('Final epoch model saved to %s' % model_save_file)
+            if rank == 0 and writer is not None:
+                writer.add_scalar("Loss/train", train_loss, epoch)
+                writer.add_scalar("Learning_Rate", current_lr, epoch)
+                writer.flush()
+            continue
+
         validation_loss, val_predictions, val_labels = validation_step(val_loader, model, criterion, device, local_rank)
 
         val_loss_tensor = torch.tensor(validation_loss, device=device)
@@ -376,7 +404,8 @@ def main():
             torch.save({'state_dict': model.module.state_dict(),
                         'best_score': best_score,
                         'best_val_loss': best_val_loss,
-                        'selection_metric': args.selection_metric}, model_save_file)
+                        'selection_metric': args.selection_metric,
+                        'data_protocol': args.data_protocol}, model_save_file)
             print('Model saved to %s' % model_save_file)
 
         if rank == 0 and args.progress_file is not None:
@@ -427,8 +456,11 @@ def main():
     dist.barrier()
     training_time = time.time() - t0
     if rank == 0:
-        print(f'\nTraining complete. Best {args.selection_metric} score: {best_score:.4f} '
-              f'(val_loss {best_val_loss:.4f}) at epoch {best_iter+1}')
+        if args.data_protocol == 'official':
+            print(f'\nTraining complete. Final epoch checkpoint: {args.epochs}')
+        else:
+            print(f'\nTraining complete. Best {args.selection_metric} score: {best_score:.4f} '
+                  f'(val_loss {best_val_loss:.4f}) at epoch {best_iter+1}')
         print(f'Training time: {training_time:.2f} seconds')
         if writer is not None:
             writer.flush()
@@ -443,6 +475,7 @@ def main():
             f.write(f"Best_Val_Score: {best_score:.6f}\n")
             f.write(f"Best_Epoch: {best_iter + 1}\n")
             f.write(f"Seed: {args.seed}\n")
+            f.write(f"Data_Protocol: {args.data_protocol}\n")
             f.write(f"Training Time: {training_time:.1f}s\n")
         print(f'[TUNING] Objective ({args.selection_metric}) = {best_score:.6f} written to {metrics_path}')
 
@@ -526,12 +559,15 @@ def main():
         print('=' * 60)
 
         with open(os.path.join(args.model_dir, args.save_model + '_metrics.txt'), 'w') as f:
-            f.write(f"Objective: {best_score:.6f}\n")
-            f.write(f"Selection_Metric: {args.selection_metric}\n")
-            f.write(f"Best_Val_Loss: {best_val_loss:.6f}\n")
-            f.write(f"Best_Val_Score: {best_score:.6f}\n")
-            f.write(f"Best_Epoch: {best_iter + 1}\n")
             f.write(f"Seed: {args.seed}\n")
+            f.write(f"Data_Protocol: {args.data_protocol}\n")
+            if args.data_protocol == 'official':
+                f.write(f"Training_Epochs: {args.epochs}\n")
+            else:
+                f.write(f"Selection_Metric: {args.selection_metric}\n")
+                f.write(f"Best_Val_Loss: {best_val_loss:.6f}\n")
+                f.write(f"Best_Val_Score: {best_score:.6f}\n")
+                f.write(f"Best_Epoch: {best_iter + 1}\n")
             f.write(f"Accuracy    : {np.mean(tmp_report['Accuracy']):.4f}\n")
             f.write(f"Precision   : {np.mean(tmp_report['Precision']):.4f}\n")
             f.write(f"Sensitivity : {np.mean(tmp_report['Sensitivity']):.4f}\n")
