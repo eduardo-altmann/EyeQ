@@ -8,6 +8,7 @@
 #SBATCH --error=/ssd2/eadbem/thiago/EyeQ/optuna/%x_%j.err
 
 set -uo pipefail
+export DATA_PROTOCOL=${DATA_PROTOCOL:-patient_stratified}
 
 RESULTS_DIR=/home/users/eadbem/eyeq/results/optuna
 LOGS_DIR=/ssd2/eadbem/thiago/EyeQ/optuna
@@ -35,7 +36,7 @@ TB_PID=$!
 uv run optuna-dashboard sqlite:///optuna_study.db --host 143.54.85.24 --port 8080 &
 DASH_PID=$!
 
-uv run optuna_driver.py --n_gpus 4 --n_trials 12 --epochs 25
+uv run optuna_driver.py --n_gpus 4 --n_trials 12 --epochs 25 --data_protocol "$DATA_PROTOCOL"
 
 # Encerra os dashboards (senão ficam pendurados após o job acabar)
 kill "$TB_PID" "$DASH_PID" 2>/dev/null

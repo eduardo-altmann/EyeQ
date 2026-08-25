@@ -18,8 +18,12 @@ def parse_args():
                         help='Número de trials do Optuna a rodar nesta execução')
     parser.add_argument('--epochs', type=int, default=25,
                         help='Épocas por trial (não confundir com épocas do treino final)')
-    parser.add_argument('--study_name', type=str, default='eyeq_tuning')
+    parser.add_argument('--study_name', type=str, default=None,
+                        help='Defaults to eyeq_patient_stratified_tuning')
     parser.add_argument('--storage', type=str, default='sqlite:///optuna_study.db')
+    parser.add_argument('--data_protocol', type=str, default='patient_stratified',
+                        choices=['patient_stratified'],
+                        help='HPO requires the protocol with a validation set')
     parser.add_argument('--selection_metric', type=str, default='kappa',
                         choices=['kappa', 'macro_f1', 'auc', 'loss'],
                         help='Objective maximised by Optuna (validation split only)')
@@ -34,6 +38,8 @@ def parse_args():
 
 
 args = parse_args()
+if args.study_name is None:
+    args.study_name = 'eyeq_patient_stratified_tuning'
 os.makedirs('./result', exist_ok=True)
 
 
@@ -62,7 +68,7 @@ def objective(trial):
     warmup_epochs = trial.suggest_int('warmup_epochs', 2, 6)
     momentum = trial.suggest_float('momentum', 0.8, 0.99)
 
-    tag = f"trial_{trial.number}"
+    tag = f"{args.data_protocol}_trial_{trial.number}"
     progress_path = f"./result/{tag}_progress.jsonl"
     metrics_path = f"./result/{tag}_metrics.txt"
     for p in (progress_path, metrics_path):
@@ -75,6 +81,7 @@ def objective(trial):
         "--tuning",
         "--save_model", tag,
         "--seed", str(args.seed),
+        "--data_protocol", args.data_protocol,
         "--selection_metric", args.selection_metric,
         "--progress_file", progress_path,
         "--lr", str(lr),
@@ -152,4 +159,4 @@ study.optimize(objective, n_trials=args.n_trials)
 
 print("Best params:", study.best_params)
 print("Best objective ({}):".format(args.selection_metric), study.best_value)
-study.trials_dataframe().to_csv("optuna_results.csv", index=False)
+study.trials_dataframe().to_csv(f"optuna_results_{args.data_protocol}.csv", index=False)

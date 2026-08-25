@@ -6,6 +6,7 @@
 # job-name, output e error são definidos dinamicamente pelo submit_single_experiment.sh
 
 set -uo pipefail
+export DATA_PROTOCOL=${DATA_PROTOCOL:-official}
 
 if [ -z "${RUN_ID:-}" ]; then
     echo "ERRO: RUN_ID não definido. Não rode este script diretamente com sbatch;" >&2
@@ -37,6 +38,7 @@ TB_PID=$!
 
 uv run torchrun --nproc_per_node=2 \
     Main_EyeQuality_tuned_parallel.py \
+    --data_protocol "$DATA_PROTOCOL" \
     --lr 0.00837248326772002 \
     --batch-size 8 \
     --weight_decay 1.3866006245078523e-05 \

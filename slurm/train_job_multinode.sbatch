@@ -9,6 +9,7 @@
 # job-name, output e error sao definidos dinamicamente pelo submit_multinode_experiment.sh
 
 set -uo pipefail
+export DATA_PROTOCOL=${DATA_PROTOCOL:-official}
 
 if [ -z "${RUN_ID:-}" ]; then
     echo "ERRO: RUN_ID nao definido. Nao rode este script diretamente com sbatch;" >&2
@@ -68,6 +69,7 @@ srun --ntasks-per-node=1 bash -c '
         --rdzv_backend=c10d \
         --rdzv_endpoint=$MASTER_ADDR:$MASTER_PORT \
         Main_EyeQuality_tuned_parallel.py \
+        --data_protocol "$DATA_PROTOCOL" \
         --lr 0.00837248326772002 \
         --batch-size 8 \
         --weight_decay 1.3866006245078523e-05 \
