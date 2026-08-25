@@ -5,6 +5,7 @@ import os
 import cv2 as cv
 from PIL import ImageFile
 from filter_missing_labels import filter_csv
+from create_patient_stratified_splits import create_patient_stratified_splits
 from multiprocessing import Pool
 from functools import partial
 
@@ -125,6 +126,11 @@ if __name__ == "__main__":
 
     filter_csv('../data/Label_EyeQ_train.csv', './train', '../data/Label_EyeQ_train.filtered.csv')
     filter_csv('../data/Label_EyeQ_test.csv', './test', '../data/Label_EyeQ_test.filtered.csv')
+    create_patient_stratified_splits(
+        '../data/Label_EyeQ_train.filtered.csv',
+        '../data/Label_EyeQ_test.filtered.csv',
+        '../data',
+    )
 
     with open('./metrics/total_metrics.txt', 'w') as f:
         f.write(f"Tempo total geral: {time.time() - total_start:.1f}s\n")

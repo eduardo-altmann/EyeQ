@@ -21,6 +21,9 @@ def main():
     parser.add_argument('--n_classes', type=int, default=3)
     parser.add_argument('--label_idx', type=list, default=['Good', 'Usable', 'Reject'])
     parser.add_argument('--pretrained', action='store_true', default=False)
+    parser.add_argument('--data_protocol', type=str, default='official',
+                        choices=['official', 'patient_stratified'],
+                        help='Evaluate the original test set or patient-stratified held-out test')
 
     args = parser.parse_args()
 
@@ -31,8 +34,18 @@ def main():
     torch.cuda.manual_seed_all(0)
 
     data_root = '../EyeQ_preprocess/'
-    test_images_dir = data_root + '/test'
-    label_test_file = '../data/Label_EyeQ_test.filtered.csv'
+    if args.data_protocol == 'official':
+        test_images_dir = os.path.join(data_root, 'test')
+        label_test_file = '../data/Label_EyeQ_test.filtered.csv'
+    else:
+        test_images_dir = data_root
+        label_test_file = '../data/Label_EyeQ_patient_stratified_test.csv'
+        if not os.path.exists(label_test_file):
+            raise FileNotFoundError(
+                'Missing patient-stratified test manifest. Run '
+                'EyeQ_preprocess/create_patient_stratified_splits.py first: '
+                + label_test_file
+            )
     save_file_name = args.model_dir + args.save_model + '.csv'
 
     # Model
@@ -41,6 +54,11 @@ def main():
 
     best_model_path = os.path.join(args.model_dir, args.save_model + '.tar')
     checkpoint = torch.load(best_model_path, map_location=device)
+    checkpoint_protocol = checkpoint.get('data_protocol')
+    if checkpoint_protocol is not None and checkpoint_protocol != args.data_protocol:
+        raise ValueError(
+            f'Checkpoint protocol is {checkpoint_protocol}, requested {args.data_protocol}'
+        )
     model.load_state_dict(checkpoint['state_dict'])
     model.eval()
 
@@ -107,7 +125,7 @@ def main():
     tmp_report = compute_metric(GT_QA_list, predict_tmp, target_names=label_list)
 
     print('\n' + '=' * 60)
-    print('FINAL RESULTS:')
+    print(f'FINAL RESULTS ({args.data_protocol} protocol):')
     print(' Accuracy: ' + str("{:0.4f}".format(np.mean(tmp_report['Accuracy']))) +
           ' Precision: ' + str("{:0.4f}".format(np.mean(tmp_report['Precision']))) +
           ' Sensitivity: ' + str("{:0.4f}".format(np.mean(tmp_report['Sensitivity']))) +
@@ -115,6 +133,7 @@ def main():
     print('=' * 60)
 
     with open(os.path.join(args.model_dir, args.save_model + '_metrics.txt'), 'w') as f:
+        f.write(f"Data_Protocol: {args.data_protocol}\n")
         f.write(f"Accuracy    : {np.mean(tmp_report['Accuracy']):.4f}\n")
         f.write(f"Precision   : {np.mean(tmp_report['Precision']):.4f}\n")
         f.write(f"Sensitivity : {np.mean(tmp_report['Sensitivity']):.4f}\n")

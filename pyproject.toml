@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.7"
 dependencies = [
+    "matplotlib>=3.5.3",
     "numpy>=1.21.6",
     "opencv-python>=5.0.0.93",
     "optuna>=4.0.0",
