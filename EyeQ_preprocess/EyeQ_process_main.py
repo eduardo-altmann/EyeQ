@@ -3,6 +3,7 @@ import fundus_prep as prep
 import glob
 import os
 import cv2 as cv
+import psutil
 from PIL import ImageFile
 from filter_missing_labels import filter_csv
 from create_patient_stratified_splits import create_patient_stratified_splits
@@ -11,6 +12,15 @@ from functools import partial
 
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+
+def get_physical_core_count():
+    """Return the number of physical CPU cores, falling back to logical
+    core count (or 1) if physical count can't be determined."""
+    n = psutil.cpu_count(logical=False)
+    if not n:
+        n = os.cpu_count() or 1
+    return n
 
 def worker(image_path, save_path):
     dst_image = os.path.splitext(image_path.split('/')[-1])[0]+'.png'
@@ -48,7 +58,8 @@ def process(image_list, save_path):
     failures = []
     times = []
 
-    with Pool(44) as p:
+    n_procs = get_physical_core_count()
+    with Pool(n_procs) as p:
         worker_fn = partial(worker, save_path=save_path)
         for ok, failure, elapsed in p.imap_unordered(worker_fn, image_list, chunksize=64):
             if ok:
@@ -107,6 +118,7 @@ def save_metrics(split, image_list, success, failures, times, split_time):
 
 if __name__ == "__main__":
     total_start = time.time()
+    print(f"Using {get_physical_core_count()} physical cores for Pool")
 
     # treino
     train_image_list = glob.glob(os.path.join('./original_img/train', '*.jpeg'))
