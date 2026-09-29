@@ -10,7 +10,7 @@ from progress.bar import Bar
 import torchvision.transforms as transforms
 from dataloader.EyeQ_loader import DatasetGenerator
 from utils.trainer import train_step, validation_step, save_output
-from utils.metric import compute_metric
+from utils.metric import compute_metric, save_confusion_matrix
 
 import pandas as pd
 import matplotlib
@@ -204,6 +204,15 @@ roc_pdf_path = os.path.join(args.model_dir, args.save_model + '_roc.pdf')
 plt.savefig(roc_pdf_path, format='pdf')
 plt.close()
 print(f'Saved ROC curve to: {roc_pdf_path}')
+
+# ============================================================
+# Confusion matrix (CSV + PNG)
+# ============================================================
+cm = save_confusion_matrix(GT_QA_list, np.argmax(predict_tmp, axis=1), label_list,
+                           os.path.join(args.model_dir, args.save_model),
+                           title=f'Confusion matrix — {args.save_model}')
+print('Confusion matrix (rows=true, cols=predicted):')
+print(pd.DataFrame(cm, index=label_list, columns=label_list).to_string())
 
 # ============================================================
 # Metrics tracking: append this run to a persistent CSV history

@@ -9,7 +9,7 @@ from progress.bar import Bar
 import torchvision.transforms as transforms
 from dataloader.EyeQ_loader import DatasetGenerator
 from utils.trainer import train_step, validation_step, save_output
-from utils.metric import compute_metric
+from utils.metric import compute_metric, save_confusion_matrix
 
 import pandas as pd
 from networks.densenet_mcf import dense121_mcs
@@ -558,6 +558,11 @@ def main():
             ))
         print('=' * 60)
 
+        cm = save_confusion_matrix(GT_QA_list, np.argmax(predict_tmp, axis=1), label_list,
+                                   os.path.join(args.model_dir, args.save_model))
+        print('Confusion matrix (rows=true, cols=predicted):')
+        print(pd.DataFrame(cm, index=label_list, columns=label_list).to_string())
+
         with open(os.path.join(args.model_dir, args.save_model + '_metrics.txt'), 'w') as f:
             f.write(f"Seed: {args.seed}\n")
             f.write(f"Data_Protocol: {args.data_protocol}\n")
@@ -587,6 +592,8 @@ def main():
                         float(tmp_report['AUC_per_class'][idx]),
                     )
                 )
+            f.write("\nConfusion matrix (rows=true, cols=predicted):\n")
+            f.write(pd.DataFrame(cm, index=label_list, columns=label_list).to_string() + "\n")
 
     cleanup_ddp()
 
