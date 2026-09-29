@@ -66,3 +66,38 @@ def compute_metric(datanpGT, datanpPRED, target_names):
     }
 
     return output
+
+def save_confusion_matrix(y_true, y_pred, label_list, out_prefix, title='Confusion matrix'):
+    """Save the confusion matrix as CSV (counts) and PNG (counts + row-normalised %).
+
+    Returns the raw count matrix (rows = true class, cols = predicted class).
+    """
+    import matplotlib
+    matplotlib.use('Agg')  # no display on a SLURM/cluster node
+    import matplotlib.pyplot as plt
+    import pandas as pd
+
+    n = len(label_list)
+    cm = confusion_matrix(y_true, y_pred, labels=list(range(n)))
+    cm_norm = cm / np.maximum(cm.sum(axis=1, keepdims=True), 1)
+
+    pd.DataFrame(cm, index=label_list, columns=label_list).to_csv(out_prefix + '_confusion_matrix.csv')
+
+    fig, ax = plt.subplots(figsize=(5, 4.5))
+    im = ax.imshow(cm_norm, cmap='Blues', vmin=0, vmax=1)
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    ax.set_xticks(range(n))
+    ax.set_yticks(range(n))
+    ax.set_xticklabels(label_list)
+    ax.set_yticklabels(label_list)
+    ax.set_xlabel('Predicted')
+    ax.set_ylabel('True')
+    ax.set_title(title)
+    for i in range(n):
+        for j in range(n):
+            ax.text(j, i, f'{cm[i, j]}\n({100 * cm_norm[i, j]:.1f}%)', ha='center', va='center',
+                    color='white' if cm_norm[i, j] > 0.5 else 'black')
+    fig.tight_layout()
+    fig.savefig(out_prefix + '_confusion_matrix.png', dpi=150)
+    plt.close(fig)
+    return cm
