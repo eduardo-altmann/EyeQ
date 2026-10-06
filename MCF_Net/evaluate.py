@@ -86,8 +86,8 @@ transformList2 = transforms.Compose([
 ])
 
 transform_list_val1 = transforms.Compose([
-    transforms.Resize(224),
-    transforms.CenterCrop(224),
+    transforms.Resize(args.crop_size),
+    transforms.CenterCrop(args.crop_size),
 ])
 
 data_test = DatasetGenerator(data_dir=test_images_dir, list_file=label_test_file, transform1=transform_list_val1,

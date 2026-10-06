@@ -231,8 +231,8 @@ def main():
         print('=' * 60)
 
     transform_list1 = transforms.Compose([
-        transforms.Resize(256),
-        transforms.RandomResizedCrop(224, scale=(0.8, 1.0)),
+        transforms.Resize(int(round(args.crop_size * 256 / 224))),
+        transforms.RandomResizedCrop(args.crop_size, scale=(0.8, 1.0)),
         transforms.RandomHorizontalFlip(),
         transforms.RandomVerticalFlip(),
         transforms.RandomRotation(degrees=(-180, +180)),
@@ -246,8 +246,8 @@ def main():
     ])
 
     transform_list_val1 = transforms.Compose([
-        transforms.Resize(224),
-        transforms.CenterCrop(224),
+        transforms.Resize(args.crop_size),
+        transforms.CenterCrop(args.crop_size),
     ])
 
     data_train_aug = DatasetGenerator(data_dir=train_images_dir, list_file=label_train_file,

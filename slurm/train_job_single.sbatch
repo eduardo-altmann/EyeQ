@@ -192,7 +192,8 @@ uv run "${UV_RUN_ARGS[@]}" torchrun \
     --momentum 0.8007658696453809 \
     --warmup_epochs 5 \
     --data_protocol patient_stratified \
-    --epochs 45
+    --epochs 45 \
+    --crop_size 384
 TRAIN_STATUS=$?
 
 # Encerra o TensorBoard (senão fica pendurado após o job acabar)
