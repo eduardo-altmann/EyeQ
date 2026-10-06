@@ -68,7 +68,8 @@ fi
 
 REPO_SRC="${REPO_SRC:-$HOME/eyeq/EyeQ}"
 KEEP_WORKDIR="${KEEP_WORKDIR:-0}"
-RESULTS_DIR=/home/users/eadbem/eyeq/results/single/stratified/${RUN_ID}
+EXPERIMENT="${EXPERIMENT:-stratified}"
+RESULTS_DIR=/home/users/eadbem/eyeq/results/single/${EXPERIMENT}/${RUN_ID}
 
 # Pasta exclusiva por job: jobs simultâneos no mesmo nó não se atropelam.
 JOB_TAG="single_${RUN_ID}_${SLURM_JOB_ID:-manual$$}"
@@ -186,12 +187,11 @@ uv run "${UV_RUN_ARGS[@]}" torchrun \
     --nproc_per_node="${GPUS:-1}" \
     Main_EyeQuality_tuned_parallel.py \
     --lr 0.00837248326772002 \
-    --batch-size 8 \
+    --batch-size "${BATCH_SIZE:-4}" \
     --weight_decay 1.3866006245078523e-05 \
     --lr_scheduler cosine \
     --momentum 0.8007658696453809 \
     --warmup_epochs 5 \
-    --data_protocol patient_stratified \
     --epochs 45 \
     --crop_size 384
 TRAIN_STATUS=$?

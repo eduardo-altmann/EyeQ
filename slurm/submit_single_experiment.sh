@@ -46,6 +46,9 @@
 #                               (padrão: 192.168.30.51). Porta: 8080.
 #     -r, --repo <caminho>      Repositório de origem a ser copiado
 #                               (padrão: ~/eyeq/EyeQ).
+#     -e, --experiment <nome>   Nome da pasta dentro de results/single/ onde a
+#                               execução é salva (padrão: stratified). Ex.:
+#                               -e resolution -> results/single/resolution/<ID>
 #     -k, --keep                Não apaga a cópia temporária no fim do job
 #                               (útil para depurar). Lembre de apagar depois.
 #     -h, --help                Mostra a ajuda resumida.
@@ -73,6 +76,9 @@
 #   # Nó ARM (a arquitetura é detectada sozinha pelo job)
 #   ./submit_single_experiment.sh -m grace -n grace1 -d ssd
 #
+#   # Salva em results/single/resolution/ em vez de stratified/
+#   ./submit_single_experiment.sh -m poti -e resolution
+#
 #   # Mantém a cópia temporária para inspecionar depois
 #   ./submit_single_experiment.sh -m poti -n poti5 --keep
 #
@@ -81,11 +87,11 @@
 #
 # DEPOIS DE SUBMETER
 #   squeue -u $USER                       # ver se está na fila / rodando
-#   tail -f ~/eyeq/results/single/stratified/<ID>/logs/*.out   # acompanhar
+#   tail -f ~/eyeq/results/single/<experimento>/<ID>/logs/*.out   # acompanhar
 #   http://<tb-host>:8080                 # TensorBoard (enquanto treina)
 #   scancel <jobid>                       # cancelar (a limpeza roda mesmo assim)
 #
-#   Resultados em ~/eyeq/results/single/stratified/<ID>/:
+#   Resultados em ~/eyeq/results/single/<experimento>/<ID>/:
 #     preprocess/       métricas do pré-processamento
 #     training/         saída de MCF_Net/result
 #     training/runs/    logs do TensorBoard
@@ -101,7 +107,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
     cat >&2 <<USAGE
-Uso: $0 -m <partição> [-n <nó>] [-d scratch|ssd|ssd2] [-g <N>] [-t <ip>] [-r <repo>] [-k]
+Uso: $0 -m <partição> [-n <nó>] [-d scratch|ssd|ssd2] [-g <N>] [-t <ip>] [-r <repo>] [-e <experimento>] [-k]
 
   -m, --machine   Partição do SLURM (obrigatório). Ex: poti
   -n, --nodelist  Nó específico dentro da partição (opcional).
@@ -112,6 +118,7 @@ Uso: $0 -m <partição> [-n <nó>] [-d scratch|ssd|ssd2] [-g <N>] [-t <ip>] [-r 
                   o --nproc_per_node do torchrun — os dois sempre andam juntos.
   -t, --tb-host   IP/host onde o TensorBoard vai escutar (padrão: 192.168.30.51)
   -r, --repo      Repositório de origem (padrão: ~/eyeq/EyeQ)
+  -e, --experiment Pasta dentro de results/single/ (padrão: stratified)
   -k, --keep      Não apaga a cópia temporária ao fim do job
 
 Veja o cabeçalho deste script para o tutorial completo e exemplos.
@@ -126,6 +133,7 @@ TB_HOST="192.168.30.51"
 GPUS=1
 REPO_SRC="${HOME}/eyeq/EyeQ"
 KEEP_WORKDIR=0
+EXPERIMENT="stratified"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -141,6 +149,8 @@ while [ $# -gt 0 ]; do
         --gpus=*)       GPUS="${1#*=}"; shift ;;
         -r|--repo)      REPO_SRC="$2"; shift 2 ;;
         --repo=*)       REPO_SRC="${1#*=}"; shift ;;
+        -e|--experiment) EXPERIMENT="$2"; shift 2 ;;
+        --experiment=*) EXPERIMENT="${1#*=}"; shift ;;
         -k|--keep)      KEEP_WORKDIR=1; shift ;;
         -h|--help)      usage ;;
         *)
@@ -161,6 +171,11 @@ case "$BASEDIR" in
         exit 1 ;;
 esac
 
+if ! [[ "$EXPERIMENT" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    echo "ERRO: experimento inválido: '${EXPERIMENT}'. Use letras, números, '.', '_' ou '-'." >&2
+    exit 1
+fi
+
 if ! [[ "$GPUS" =~ ^[1-9][0-9]*$ ]]; then
     echo "ERRO: gpus inválido: '${GPUS}'. Use um inteiro positivo." >&2
     exit 1
@@ -180,7 +195,7 @@ for sub in EyeQ_preprocess MCF_Net; do
     fi
 done
 
-BASE_RESULTS=/home/users/eadbem/eyeq/results/single/stratified
+BASE_RESULTS=/home/users/eadbem/eyeq/results/single/${EXPERIMENT}
 mkdir -p "$BASE_RESULTS"
 
 LAST_ID=$(find "$BASE_RESULTS" -maxdepth 1 -mindepth 1 -type d -name '[0-9][0-9]' -printf '%f\n' \
@@ -199,7 +214,7 @@ while ! mkdir "${BASE_RESULTS}/$(printf "%02d" "$NEXT_ID")" 2>/dev/null; do
 done
 RUN_ID=$(printf "%02d" "$NEXT_ID")
 
-echo "Nova execução single: RUN_ID=${RUN_ID} (machine=${MACHINE}, basedir=${BASEDIR}, gpus=${GPUS})"
+echo "Nova execução single: RUN_ID=${RUN_ID} (experimento=${EXPERIMENT}, machine=${MACHINE}, basedir=${BASEDIR}, gpus=${GPUS})"
 echo "Repositório de origem: ${REPO_SRC}"
 
 mkdir -p "${BASE_RESULTS}/${RUN_ID}/preprocess"
@@ -212,7 +227,7 @@ SBATCH_ARGS=(
     --error="${BASE_RESULTS}/${RUN_ID}/logs/%x_%j.err"
     --partition="${MACHINE}"
     --gres="gpu:${GPUS}"
-    --export=ALL,RUN_ID="${RUN_ID}",BASEDIR="${BASEDIR}",TB_HOST="${TB_HOST}",GPUS="${GPUS}",REPO_SRC="${REPO_SRC}",KEEP_WORKDIR="${KEEP_WORKDIR}"
+    --export=ALL,RUN_ID="${RUN_ID}",BASEDIR="${BASEDIR}",TB_HOST="${TB_HOST}",GPUS="${GPUS}",REPO_SRC="${REPO_SRC}",KEEP_WORKDIR="${KEEP_WORKDIR}",EXPERIMENT="${EXPERIMENT}"
 )
 
 if [ -n "$NODELIST" ]; then
