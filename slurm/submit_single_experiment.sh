@@ -51,6 +51,15 @@
 #                               -e resolution -> results/single/resolution/<ID>
 #     -k, --keep                Não apaga a cópia temporária no fim do job
 #                               (útil para depurar). Lembre de apagar depois.
+#     -f, --folds <spec>        Cross-validation: submete um job array com um
+#                               treino por fold (0 a 8). Ex.: 0-8 (todos), 3,
+#                               0,4,7 ou 0-2,5. Força DATA_PROTOCOL=patient_stratified.
+#                               Cada fold é uma alocação separada.
+#     -p, --max-parallel <N>    Com --folds: no máximo N folds rodando ao
+#                               mesmo tempo (padrão: sem limite).
+#     -i, --run-id <ID>         Com --folds: reaproveita uma execução que já
+#                               existe (ex.: 07) em vez de criar um índice novo.
+#                               Útil para refazer um fold que falhou.
 #     -h, --help                Mostra a ajuda resumida.
 #
 #   Todas as opções aceitam as formas "-m poti", "--machine poti" e
@@ -84,6 +93,22 @@
 #
 #   # Variáveis de ambiente são repassadas ao job (--export=ALL), ex.:
 #   DATA_PROTOCOL=official ./submit_single_experiment.sh -m poti
+#   EPOCHS=1 ./submit_single_experiment.sh -m poti     # teste rápido
+#
+#   # Cross-validation 9-fold, no máximo 3 folds rodando ao mesmo tempo
+#   ./submit_single_experiment.sh -m poti -e kfold --folds 0-8 -p 3
+#
+#   # O fold 3 da execução 02 falhou: refaz só ele, na mesma pasta
+#   ./submit_single_experiment.sh -m poti -e kfold --folds 3 --run-id 02
+#
+# CROSS-VALIDATION
+#   O test (10%) é fixo e igual para todos os folds. Os outros 90% são
+#   divididos em 9 grupos por paciente; o fold k usa o grupo k como validation
+#   e o resto como train (80/10/10). O fold 0 é idêntico ao split
+#   patient_stratified sem fold. Uma execução (<ID>) é um CV inteiro:
+#     <ID>/fold_<k>/{preprocess,training,logs}
+#   Para resumir os folds (média ± desvio no test):
+#     python MCF_Net/aggregate_folds.py ~/eyeq/results/single/<experimento>/<ID>
 #
 # DEPOIS DE SUBMETER
 #   squeue -u $USER                       # ver se está na fila / rodando
@@ -91,7 +116,8 @@
 #   http://<tb-host>:8080                 # TensorBoard (enquanto treina)
 #   scancel <jobid>                       # cancelar (a limpeza roda mesmo assim)
 #
-#   Resultados em ~/eyeq/results/single/<experimento>/<ID>/:
+#   Resultados em ~/eyeq/results/single/<experimento>/<ID>/ (com --folds,
+#   em <ID>/fold_<k>/):
 #     preprocess/       métricas do pré-processamento
 #     training/         saída de MCF_Net/result
 #     training/runs/    logs do TensorBoard
@@ -108,6 +134,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 usage() {
     cat >&2 <<USAGE
 Uso: $0 -m <partição> [-n <nó>] [-d scratch|ssd|ssd2] [-g <N>] [-t <ip>] [-r <repo>] [-e <experimento>] [-k]
+          [-f <folds> [-p <N>] [-i <ID>]]
 
   -m, --machine   Partição do SLURM (obrigatório). Ex: poti
   -n, --nodelist  Nó específico dentro da partição (opcional).
@@ -120,6 +147,9 @@ Uso: $0 -m <partição> [-n <nó>] [-d scratch|ssd|ssd2] [-g <N>] [-t <ip>] [-r 
   -r, --repo      Repositório de origem (padrão: ~/eyeq/EyeQ)
   -e, --experiment Pasta dentro de results/single/ (padrão: stratified)
   -k, --keep      Não apaga a cópia temporária ao fim do job
+  -f, --folds     Cross-validation: folds a rodar, ex. 0-8, 3 ou 0,4 (job array)
+  -p, --max-parallel  Com --folds: máximo de folds rodando ao mesmo tempo
+  -i, --run-id    Com --folds: reaproveita a execução <ID> existente
 
 Veja o cabeçalho deste script para o tutorial completo e exemplos.
 USAGE
@@ -134,6 +164,10 @@ GPUS=1
 REPO_SRC="${HOME}/eyeq/EyeQ"
 KEEP_WORKDIR=0
 EXPERIMENT="stratified"
+FOLDS=""
+MAX_PARALLEL=""
+REUSE_RUN_ID=""
+N_CV_FOLDS=9   # tem que bater com N_CV_FOLDS em create_patient_stratified_splits.py
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -152,6 +186,12 @@ while [ $# -gt 0 ]; do
         -e|--experiment) EXPERIMENT="$2"; shift 2 ;;
         --experiment=*) EXPERIMENT="${1#*=}"; shift ;;
         -k|--keep)      KEEP_WORKDIR=1; shift ;;
+        -f|--folds)     FOLDS="$2"; shift 2 ;;
+        --folds=*)      FOLDS="${1#*=}"; shift ;;
+        -p|--max-parallel) MAX_PARALLEL="$2"; shift 2 ;;
+        --max-parallel=*)  MAX_PARALLEL="${1#*=}"; shift ;;
+        -i|--run-id)    REUSE_RUN_ID="$2"; shift 2 ;;
+        --run-id=*)     REUSE_RUN_ID="${1#*=}"; shift ;;
         -h|--help)      usage ;;
         *)
             echo "Opção desconhecida: $1" >&2
@@ -181,6 +221,60 @@ if ! [[ "$GPUS" =~ ^[1-9][0-9]*$ ]]; then
     exit 1
 fi
 
+# Expande a lista de folds ("0-2,5" -> "0 1 2 5") para validar e criar as pastas.
+FOLD_LIST=()
+if [ -n "$FOLDS" ]; then
+    IFS=',' read -ra FOLD_PARTS <<< "$FOLDS"
+    for part in "${FOLD_PARTS[@]}"; do
+        if [[ "$part" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+            for ((k = 10#${BASH_REMATCH[1]}; k <= 10#${BASH_REMATCH[2]}; k++)); do FOLD_LIST+=("$k"); done
+        elif [[ "$part" =~ ^[0-9]+$ ]]; then
+            FOLD_LIST+=("$((10#$part))")
+        else
+            echo "ERRO: folds inválido: '${FOLDS}'. Use ex.: 0-8, 3 ou 0,4,7." >&2
+            exit 1
+        fi
+    done
+    for k in "${FOLD_LIST[@]}"; do
+        if [ "$k" -ge "$N_CV_FOLDS" ]; then
+            echo "ERRO: fold ${k} não existe (folds vão de 0 a $((N_CV_FOLDS - 1)))." >&2
+            exit 1
+        fi
+    done
+    if [ "${#FOLD_LIST[@]}" -eq 0 ]; then
+        echo "ERRO: folds inválido: '${FOLDS}' não contém nenhum fold." >&2
+        exit 1
+    fi
+
+    if [ -n "${DATA_PROTOCOL:-}" ] && [ "$DATA_PROTOCOL" != "patient_stratified" ]; then
+        echo "ERRO: --folds exige DATA_PROTOCOL=patient_stratified (recebido: ${DATA_PROTOCOL})." >&2
+        exit 1
+    fi
+    DATA_PROTOCOL=patient_stratified
+fi
+
+if [ -n "$MAX_PARALLEL" ]; then
+    if [ -z "$FOLDS" ]; then
+        echo "ERRO: --max-parallel só faz sentido com --folds." >&2
+        exit 1
+    fi
+    if ! [[ "$MAX_PARALLEL" =~ ^[1-9][0-9]*$ ]]; then
+        echo "ERRO: max-parallel inválido: '${MAX_PARALLEL}'. Use um inteiro positivo." >&2
+        exit 1
+    fi
+fi
+
+if [ -n "$REUSE_RUN_ID" ]; then
+    if [ -z "$FOLDS" ]; then
+        echo "ERRO: --run-id só faz sentido com --folds." >&2
+        exit 1
+    fi
+    if ! [[ "$REUSE_RUN_ID" =~ ^[0-9]+$ ]]; then
+        echo "ERRO: run-id inválido: '${REUSE_RUN_ID}'. Use o número da execução, ex.: 07." >&2
+        exit 1
+    fi
+fi
+
 # Caminho absoluto do repositório (o job roda em outro diretório).
 if [ ! -d "$REPO_SRC" ]; then
     echo "ERRO: repositório não encontrado: '${REPO_SRC}'." >&2
@@ -198,36 +292,64 @@ done
 BASE_RESULTS=/home/users/eadbem/eyeq/results/single/${EXPERIMENT}
 mkdir -p "$BASE_RESULTS"
 
-LAST_ID=$(find "$BASE_RESULTS" -maxdepth 1 -mindepth 1 -type d -name '[0-9][0-9]' -printf '%f\n' \
-            | sort -n | tail -1)
-
-if [ -z "$LAST_ID" ]; then
-    NEXT_ID=1
+if [ -n "$REUSE_RUN_ID" ]; then
+    RUN_ID=$(printf "%02d" "$((10#$REUSE_RUN_ID))")
+    if [ ! -d "${BASE_RESULTS}/${RUN_ID}" ]; then
+        echo "ERRO: execução ${BASE_RESULTS}/${RUN_ID} não existe." >&2
+        exit 1
+    fi
 else
-    NEXT_ID=$((10#$LAST_ID + 1))
+    LAST_ID=$(find "$BASE_RESULTS" -maxdepth 1 -mindepth 1 -type d -name '[0-9][0-9]' -printf '%f\n' \
+                | sort -n | tail -1)
+
+    if [ -z "$LAST_ID" ]; then
+        NEXT_ID=1
+    else
+        NEXT_ID=$((10#$LAST_ID + 1))
+    fi
+
+    # mkdir sem -p é atômico: se duas submissões rodarem ao mesmo tempo, só uma
+    # consegue criar a pasta; a outra tenta o próximo número.
+    while ! mkdir "${BASE_RESULTS}/$(printf "%02d" "$NEXT_ID")" 2>/dev/null; do
+        NEXT_ID=$((NEXT_ID + 1))
+    done
+    RUN_ID=$(printf "%02d" "$NEXT_ID")
 fi
 
-# mkdir sem -p é atômico: se duas submissões rodarem ao mesmo tempo, só uma
-# consegue criar a pasta; a outra tenta o próximo número.
-while ! mkdir "${BASE_RESULTS}/$(printf "%02d" "$NEXT_ID")" 2>/dev/null; do
-    NEXT_ID=$((NEXT_ID + 1))
-done
-RUN_ID=$(printf "%02d" "$NEXT_ID")
-
-echo "Nova execução single: RUN_ID=${RUN_ID} (experimento=${EXPERIMENT}, machine=${MACHINE}, basedir=${BASEDIR}, gpus=${GPUS})"
+echo "Execução single: RUN_ID=${RUN_ID} (experimento=${EXPERIMENT}, machine=${MACHINE}, basedir=${BASEDIR}, gpus=${GPUS})"
 echo "Repositório de origem: ${REPO_SRC}"
 
-mkdir -p "${BASE_RESULTS}/${RUN_ID}/preprocess"
-mkdir -p "${BASE_RESULTS}/${RUN_ID}/training"
-mkdir -p "${BASE_RESULTS}/${RUN_ID}/logs"
+EXPORTS="ALL,RUN_ID=${RUN_ID},BASEDIR=${BASEDIR},TB_HOST=${TB_HOST},GPUS=${GPUS},REPO_SRC=${REPO_SRC},KEEP_WORKDIR=${KEEP_WORKDIR},EXPERIMENT=${EXPERIMENT}"
 
-SBATCH_ARGS=(
-    --job-name="hcpa_eyeq_single_${RUN_ID}"
-    --output="${BASE_RESULTS}/${RUN_ID}/logs/%x_%j.out"
-    --error="${BASE_RESULTS}/${RUN_ID}/logs/%x_%j.err"
+if [ -n "$FOLDS" ]; then
+    # O SLURM não cria a pasta dos logs, então cada fold_<k>/logs já tem que existir.
+    for k in "${FOLD_LIST[@]}"; do
+        mkdir -p "${BASE_RESULTS}/${RUN_ID}/fold_${k}"/{preprocess,training,logs}
+    done
+    ARRAY_SPEC="$(IFS=,; echo "${FOLD_LIST[*]}")${MAX_PARALLEL:+%${MAX_PARALLEL}}"
+    echo "Cross-validation: folds ${FOLD_LIST[*]} (array=${ARRAY_SPEC})"
+
+    SBATCH_ARGS=(
+        --job-name="hcpa_eyeq_single_${RUN_ID}_cv"
+        --array="${ARRAY_SPEC}"
+        --output="${BASE_RESULTS}/${RUN_ID}/fold_%a/logs/%x_%A_%a.out"
+        --error="${BASE_RESULTS}/${RUN_ID}/fold_%a/logs/%x_%A_%a.err"
+        --export="${EXPORTS},DATA_PROTOCOL=${DATA_PROTOCOL}"
+    )
+else
+    mkdir -p "${BASE_RESULTS}/${RUN_ID}"/{preprocess,training,logs}
+
+    SBATCH_ARGS=(
+        --job-name="hcpa_eyeq_single_${RUN_ID}"
+        --output="${BASE_RESULTS}/${RUN_ID}/logs/%x_%j.out"
+        --error="${BASE_RESULTS}/${RUN_ID}/logs/%x_%j.err"
+        --export="${EXPORTS}"
+    )
+fi
+
+SBATCH_ARGS+=(
     --partition="${MACHINE}"
     --gres="gpu:${GPUS}"
-    --export=ALL,RUN_ID="${RUN_ID}",BASEDIR="${BASEDIR}",TB_HOST="${TB_HOST}",GPUS="${GPUS}",REPO_SRC="${REPO_SRC}",KEEP_WORKDIR="${KEEP_WORKDIR}",EXPERIMENT="${EXPERIMENT}"
 )
 
 if [ -n "$NODELIST" ]; then

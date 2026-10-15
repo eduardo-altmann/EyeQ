@@ -8,6 +8,7 @@ conjunto de validação.
 
 Uso (a partir de MCF_Net/):
   python dump_scores.py --model_dir ./result --save_model DenseNet121_v3_tuned
+  (num run de CV o fold é lido do checkpoint; --fold K força um fold específico)
 
 Saída em <model_dir>/<save_model>_scores/:
   {val,test}_scores.npy   (N, 3) saída sigmoide do ramo fused, ordem Good/Usable/Reject
@@ -26,10 +27,14 @@ from dataloader.EyeQ_loader import DatasetGenerator
 from networks.densenet_mcf import dense121_mcs
 
 DATA_ROOT = '../EyeQ_preprocess/'
-MANIFESTS = {
-    'val': '../data/Label_EyeQ_patient_stratified_validation.csv',
-    'test': '../data/Label_EyeQ_patient_stratified_test.csv',
-}
+
+
+def manifests(fold):
+    prefix = '' if fold is None else f'fold{fold}_'
+    return {
+        'val': f'../data/Label_EyeQ_patient_stratified_{prefix}validation.csv',
+        'test': '../data/Label_EyeQ_patient_stratified_test.csv',
+    }
 
 
 @torch.no_grad()
@@ -60,13 +65,10 @@ def main():
     parser.add_argument('--n_classes', type=int, default=3)
     parser.add_argument('--out_dir', type=str, default=None,
                         help='default: <model_dir>/<save_model>_scores')
+    parser.add_argument('--fold', type=int, default=None,
+                        help='CV fold whose validation split is dumped; default: the '
+                             'fold saved in the checkpoint (fold 0 manifests if none)')
     args = parser.parse_args()
-
-    for path in MANIFESTS.values():
-        if not os.path.exists(path):
-            raise FileNotFoundError(
-                'Missing patient-stratified manifest. Run '
-                'EyeQ_preprocess/create_patient_stratified_splits.py first: ' + path)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     out_dir = args.out_dir or os.path.join(args.model_dir, args.save_model + '_scores')
@@ -79,6 +81,19 @@ def main():
     if protocol is not None and protocol != 'patient_stratified':
         raise ValueError(f'Checkpoint protocol is {protocol}; prior adjustment needs '
                          'patient_stratified (validation split required)')
+    checkpoint_fold = checkpoint.get('fold')
+    if args.fold is None:
+        args.fold = checkpoint_fold
+    elif checkpoint_fold is not None and checkpoint_fold != args.fold:
+        raise ValueError(f'Checkpoint was trained on fold {checkpoint_fold}, requested {args.fold}')
+
+    split_manifests = manifests(args.fold)
+    for path in split_manifests.values():
+        if not os.path.exists(path):
+            raise FileNotFoundError(
+                'Missing patient-stratified manifest. Run '
+                'EyeQ_preprocess/create_patient_stratified_splits.py first: ' + path)
+    print(f'Fold: {args.fold}')
     model.load_state_dict(checkpoint['state_dict'])
     model.to(device).eval()
 
@@ -92,7 +107,7 @@ def main():
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
     ])
 
-    for split, manifest in MANIFESTS.items():
+    for split, manifest in split_manifests.items():
         dataset = DatasetGenerator(data_dir=DATA_ROOT, list_file=manifest,
                                    transform1=transform1, transform2=transform2,
                                    n_class=args.n_classes, set_name=split)

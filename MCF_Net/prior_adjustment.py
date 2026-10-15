@@ -164,14 +164,20 @@ def export_method(name, probs, labels, out_dir, model_name):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dir", required=True, help="pasta gerada pelo dump_scores.py")
-    ap.add_argument("--train-csv", default="../data/Label_EyeQ_patient_stratified_train.csv",
-                    help="CSV do treino EFETIVAMENTE usado (fonte do prior de treino)")
+    ap.add_argument("--train-csv", default=None,
+                    help="CSV do treino EFETIVAMENTE usado (fonte do prior de treino); "
+                         "default: o train do --fold (ou o train sem fold)")
+    ap.add_argument("--fold", type=int, default=None,
+                    help="fold de CV do modelo; escolhe o CSV de treino default")
     ap.add_argument("--label-col", default="quality")
     ap.add_argument("--no-temp", action="store_true", help="desliga temperature scaling")
     ap.add_argument("--model-name", default=None,
                     help="rótulo nos títulos/histórico (default: nome da pasta --dir)")
     ap.add_argument("--out", default=None, help="default: <dir>/prior_adjustment_results.json")
     args = ap.parse_args()
+    if args.train_csv is None:
+        prefix = "" if args.fold is None else f"fold{args.fold}_"
+        args.train_csv = f"../data/Label_EyeQ_patient_stratified_{prefix}train.csv"
 
     model_name = args.model_name or os.path.basename(os.path.normpath(args.dir))
     load = lambda name: np.load(os.path.join(args.dir, name))

@@ -96,6 +96,9 @@ def main():
                         choices=['official', 'patient_stratified'],
                         help='official: original train/test split with no validation; '
                             'patient_stratified: fixed patient-grouped 80/10/10 manifests')
+    parser.add_argument('--fold', type=int, default=None,
+                        help='patient_stratified only: CV fold (0-8) used as validation; '
+                             'the test set is the same for every fold. Default: fold 0 manifests')
     parser.add_argument('--tuning', action='store_true', default=False,
                         help='Tuning mode: select on a held-out validation split and '
                              'NEVER touch the test set (avoids test-set leakage during HPO)')
@@ -122,6 +125,9 @@ def main():
             'The official protocol reserves its test set for one final evaluation.'
         )
 
+    if args.fold is not None and args.data_protocol != 'patient_stratified':
+        raise ValueError('--fold requires --data_protocol patient_stratified')
+
     set_seed(args.seed)
 
     if args.data_protocol == 'official':
@@ -135,8 +141,9 @@ def main():
         train_images_dir = data_root
         val_images_dir = data_root
         test_images_dir = data_root
-        label_train_file = '../data/Label_EyeQ_patient_stratified_train.csv'
-        label_val_file = '../data/Label_EyeQ_patient_stratified_validation.csv'
+        fold_prefix = '' if args.fold is None else f'fold{args.fold}_'
+        label_train_file = f'../data/Label_EyeQ_patient_stratified_{fold_prefix}train.csv'
+        label_val_file = f'../data/Label_EyeQ_patient_stratified_{fold_prefix}validation.csv'
         label_test_file = '../data/Label_EyeQ_patient_stratified_test.csv'
         missing_manifests = [
             path for path in (label_train_file, label_val_file, label_test_file)
@@ -212,6 +219,9 @@ def main():
         print('Tuned Training Configuration:')
         print(f'  Mode: {"TUNING (val-based, no test)" if args.tuning else "FINAL (test eval)"}')
         print(f'  Data protocol: {args.data_protocol}')
+        print(f'  Fold: {args.fold}')
+        if label_val_file is not None:
+            print(f'  Train/val manifests: {label_train_file}, {label_val_file}')
         print(f'  Seed: {args.seed}')
         print(f'  Selection metric: {args.selection_metric}')
         print(f'  Pretrained backbone: {args.pretrained}')
@@ -333,6 +343,7 @@ def main():
                     'state_dict': model.module.state_dict(),
                     'epoch': epoch + 1,
                     'data_protocol': args.data_protocol,
+                    'fold': args.fold,
                 }, model_save_file)
                 print('Final epoch model saved to %s' % model_save_file)
             if rank == 0 and writer is not None:
@@ -405,7 +416,8 @@ def main():
                         'best_score': best_score,
                         'best_val_loss': best_val_loss,
                         'selection_metric': args.selection_metric,
-                        'data_protocol': args.data_protocol}, model_save_file)
+                        'data_protocol': args.data_protocol,
+                        'fold': args.fold}, model_save_file)
             print('Model saved to %s' % model_save_file)
 
         if rank == 0 and args.progress_file is not None:
@@ -476,6 +488,7 @@ def main():
             f.write(f"Best_Epoch: {best_iter + 1}\n")
             f.write(f"Seed: {args.seed}\n")
             f.write(f"Data_Protocol: {args.data_protocol}\n")
+            f.write(f"Fold: {args.fold}\n")
             f.write(f"Training Time: {training_time:.1f}s\n")
         print(f'[TUNING] Objective ({args.selection_metric}) = {best_score:.6f} written to {metrics_path}')
 
@@ -566,6 +579,7 @@ def main():
         with open(os.path.join(args.model_dir, args.save_model + '_metrics.txt'), 'w') as f:
             f.write(f"Seed: {args.seed}\n")
             f.write(f"Data_Protocol: {args.data_protocol}\n")
+            f.write(f"Fold: {args.fold}\n")
             if args.data_protocol == 'official':
                 f.write(f"Training_Epochs: {args.epochs}\n")
             else:

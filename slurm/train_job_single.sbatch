@@ -11,6 +11,10 @@
 #   3. treinamento + TensorBoard
 #   4. copia resultados para a home
 #   5. apaga a cópia temporária (exceto com KEEP_WORKDIR=1)
+#
+# Cross-validation: quando submetido como job array (submit ... --folds), cada
+# tarefa do array é um fold. O índice da tarefa (SLURM_ARRAY_TASK_ID) vira o
+# --fold do treino e os resultados vão para <execução>/fold_<k>/.
 
 set -uo pipefail
 export DATA_PROTOCOL=${DATA_PROTOCOL:-official}
@@ -71,8 +75,23 @@ KEEP_WORKDIR="${KEEP_WORKDIR:-0}"
 EXPERIMENT="${EXPERIMENT:-stratified}"
 RESULTS_DIR=/home/users/eadbem/eyeq/results/single/${EXPERIMENT}/${RUN_ID}
 
+# Fold de CV: vem do índice do job array (ou de FOLD=<k> no ambiente).
+FOLD="${FOLD:-${SLURM_ARRAY_TASK_ID:-}}"
+TRAIN_FOLD_ARGS=()
+JOB_TAG="single_${RUN_ID}"
+if [ -n "$FOLD" ]; then
+    if [ "$DATA_PROTOCOL" != "patient_stratified" ]; then
+        echo "ERRO: fold ${FOLD} pedido com DATA_PROTOCOL=${DATA_PROTOCOL};" >&2
+        echo "cross-validation só existe no protocolo patient_stratified." >&2
+        exit 1
+    fi
+    RESULTS_DIR="${RESULTS_DIR}/fold_${FOLD}"
+    TRAIN_FOLD_ARGS=(--fold "$FOLD")
+    JOB_TAG="${JOB_TAG}_fold${FOLD}"
+fi
+
 # Pasta exclusiva por job: jobs simultâneos no mesmo nó não se atropelam.
-JOB_TAG="single_${RUN_ID}_${SLURM_JOB_ID:-manual$$}"
+JOB_TAG="${JOB_TAG}_${SLURM_JOB_ID:-manual$$}"
 WORK_ROOT="/${BASEDIR}/eadbem/jobs/${JOB_TAG}"
 BASE_DIR="${WORK_ROOT}/EyeQ"
 
@@ -84,7 +103,8 @@ BASE_DIR="${WORK_ROOT}/EyeQ"
 VENV_ROOT="/${BASEDIR}/eadbem/venvs"
 export UV_LINK_MODE=copy   # cache do uv na home e venv em outro disco: sem hardlink
 
-echo "=== Execução single RUN_ID=${RUN_ID} ==="
+echo "=== Execução single RUN_ID=${RUN_ID}${FOLD:+ fold=${FOLD}} ==="
+echo "Protocolo de dados: ${DATA_PROTOCOL}"
 echo "Nó: ${HOSTNAME:-desconhecido} | Job: ${SLURM_JOB_ID:-n/a} | GPUs: ${GPUS:-1}"
 echo "Repositório de origem: ${REPO_SRC}"
 echo "Cópia de trabalho: ${BASE_DIR}"
@@ -186,13 +206,15 @@ uv run "${UV_RUN_ARGS[@]}" torchrun \
     --standalone \
     --nproc_per_node="${GPUS:-1}" \
     Main_EyeQuality_tuned_parallel.py \
+    --data_protocol "$DATA_PROTOCOL" \
+    "${TRAIN_FOLD_ARGS[@]}" \
     --lr 0.00837248326772002 \
     --batch-size "${BATCH_SIZE:-4}" \
     --weight_decay 1.3866006245078523e-05 \
     --lr_scheduler cosine \
     --momentum 0.8007658696453809 \
     --warmup_epochs 5 \
-    --epochs 45 \
+    --epochs "${EPOCHS:-45}" \
     --crop_size 384
 TRAIN_STATUS=$?
 
@@ -209,4 +231,4 @@ if [ "$TRAIN_STATUS" -ne 0 ]; then
     exit "$TRAIN_STATUS"
 fi
 
-echo "=== Execução single RUN_ID=${RUN_ID} finalizada ==="
+echo "=== Execução single RUN_ID=${RUN_ID}${FOLD:+ fold=${FOLD}} finalizada ==="

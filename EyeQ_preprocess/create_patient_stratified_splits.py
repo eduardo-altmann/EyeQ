@@ -6,7 +6,8 @@ import pandas as pd
 from sklearn.model_selection import StratifiedGroupKFold
 
 
-SPLIT_NAMES = ('train', 'validation', 'test')
+N_SPLITS = 10
+N_CV_FOLDS = N_SPLITS - 1  # um dos 10 grupos é o test fixo
 
 
 def patient_id(image_name):
@@ -56,7 +57,7 @@ def create_patient_stratified_splits(train_csv, test_csv, output_dir, seed=0):
         + '|Q' + combined['quality'].astype(str)
         + '|DR' + combined['DR_grade'].astype(str)
     )
-    splitter = StratifiedGroupKFold(n_splits=10, shuffle=True, random_state=seed)
+    splitter = StratifiedGroupKFold(n_splits=N_SPLITS, shuffle=True, random_state=seed)
     folds = [
         validation_idx
         for _, validation_idx in splitter.split(
@@ -64,45 +65,67 @@ def create_patient_stratified_splits(train_csv, test_csv, output_dir, seed=0):
         )
     ]
 
-    target_counts = combined['stratum'].value_counts() * 0.1
+    target_counts = combined['stratum'].value_counts() / N_SPLITS
     ranked_folds = sorted(
         range(len(folds)),
         key=lambda index: (
             _distribution_error(combined.iloc[folds[index]], target_counts),
-            abs(len(folds[index]) - len(combined) * 0.1),
+            abs(len(folds[index]) - len(combined) / N_SPLITS),
             index,
         ),
     )
-    validation_fold, test_fold = ranked_folds[:2]
-    assignments = np.full(len(combined), 'train', dtype=object)
-    assignments[folds[validation_fold]] = 'validation'
-    assignments[folds[test_fold]] = 'test'
-    combined['split'] = assignments
-
-    patient_split_counts = combined.groupby('patient_id')['split'].nunique()
-    if (patient_split_counts > 1).any():
-        raise RuntimeError('Patient overlap detected in generated patient-stratified splits')
+    # O test fixo continua sendo o 2º melhor fold (o mesmo do holdout antigo). Os 9
+    # restantes viram os folds de CV; o fold 0 é o antigo validation, então ele
+    # reproduz exatamente o split 80/10/10 anterior.
+    test_fold = ranked_folds[1]
+    cv_folds = [ranked_folds[0]] + sorted(ranked_folds[2:])
 
     os.makedirs(output_dir, exist_ok=True)
     output_columns = ['image', 'quality', 'DR_grade', 'source']
-    outputs = {}
-    for split_name in SPLIT_NAMES:
-        split_frame = combined[combined['split'] == split_name][output_columns].reset_index(drop=True)
-        output_path = os.path.join(
-            output_dir, f'Label_EyeQ_patient_stratified_{split_name}.csv'
-        )
-        split_frame.to_csv(output_path, index=False)
-        outputs[split_name] = output_path
 
+    def write_split(frame, name):
+        split_frame = frame[output_columns].reset_index(drop=True)
+        output_path = os.path.join(output_dir, f'Label_EyeQ_patient_stratified_{name}.csv')
+        split_frame.to_csv(output_path, index=False)
         quality_counts = split_frame['quality'].value_counts().sort_index().to_dict()
-        print(f'{split_name}: images={len(split_frame)}, quality={quality_counts}')
+        print(f'{name}: images={len(split_frame)}, quality={quality_counts}')
+        return output_path
+
+    outputs = {'test': write_split(combined.iloc[folds[test_fold]], 'test'), 'folds': []}
+    for fold_index, validation_fold in enumerate(cv_folds):
+        assignments = np.full(len(combined), 'train', dtype=object)
+        assignments[folds[validation_fold]] = 'validation'
+        assignments[folds[test_fold]] = 'test'
+        combined['split'] = assignments
+
+        patient_split_counts = combined.groupby('patient_id')['split'].nunique()
+        if (patient_split_counts > 1).any():
+            raise RuntimeError(
+                f'Patient overlap detected in generated patient-stratified fold {fold_index}'
+            )
+
+        fold_outputs = {
+            split_name: write_split(
+                combined[combined['split'] == split_name], f'fold{fold_index}_{split_name}'
+            )
+            for split_name in ('train', 'validation')
+        }
+        outputs['folds'].append(fold_outputs)
+
+        # Nomes sem fold = fold 0, para os scripts que ainda não conhecem --fold.
+        if fold_index == 0:
+            for split_name in ('train', 'validation'):
+                outputs[split_name] = write_split(
+                    combined[combined['split'] == split_name], split_name
+                )
 
     return outputs
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Create deterministic patient-stratified EyeQ 80/10/10 manifests'
+        description='Create deterministic patient-stratified EyeQ manifests: fixed test + '
+                    f'{N_CV_FOLDS} CV folds (80/10/10 each)'
     )
     parser.add_argument('--train-csv', default='../data/Label_EyeQ_train.filtered.csv')
     parser.add_argument('--test-csv', default='../data/Label_EyeQ_test.filtered.csv')
