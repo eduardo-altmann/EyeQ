@@ -1,0 +1,50 @@
+# Imagem Apptainer do ambiente EyeQ para GPUs AMD (ROCm 6.3, MI50/gfx906).
+#
+# Congela o que o uv.lock sozinho não congela: o sistema base, o interpretador
+# Python e as bibliotecas do sistema (libGL do OpenCV etc.). Os pacotes Python
+# vêm exatamente de amd/uv.lock. O ROCm em espaço de usuário vem dentro da
+# wheel do torch; do host só se usa o driver amdgpu (/dev/kfd, /dev/dri).
+#
+# Build (ver amd/build_container.sh), a partir da raiz do repositório:
+#   apptainer build --fakeroot eyeq-rocm6.3.sif amd/eyeq-rocm.def
+# Uso:
+#   apptainer exec eyeq-rocm6.3.sif python amd/check_rocm.py --gpus 8
+Bootstrap: docker
+From: python:3.12.13-slim-trixie
+
+%files
+    amd/pyproject.toml /opt/eyeq/pyproject.toml
+    amd/uv.lock /opt/eyeq/uv.lock
+    amd/.python-version /opt/eyeq/.python-version
+
+%post
+    set -eu
+    apt-get update
+    apt-get install -y --no-install-recommends libgl1 libglib2.0-0 libgomp1 procps
+    rm -rf /var/lib/apt/lists/*
+
+    pip install --no-cache-dir uv==0.12.0
+    cd /opt/eyeq
+    UV_PROJECT_ENVIRONMENT=/opt/venv UV_PYTHON_DOWNLOADS=never UV_LINK_MODE=copy \
+        uv sync --frozen --no-install-project --no-cache --python /usr/local/bin/python3.12
+    pip uninstall -y uv
+
+    # Registra versões dentro da imagem.
+    /opt/venv/bin/python -c "import torch, torchvision; print('torch', torch.__version__, 'hip', torch.version.hip, 'torchvision', torchvision.__version__)" > /opt/eyeq/versions.txt
+    /opt/venv/bin/python -m pip list --format=freeze >> /opt/eyeq/versions.txt 2>/dev/null || true
+
+%environment
+    export PATH=/opt/venv/bin:$PATH
+    export PYTHONNOUSERSITE=1
+    export MPLBACKEND=Agg
+
+%runscript
+    exec python "$@"
+
+%test
+    /opt/venv/bin/python -c "import torch, cv2, sklearn, pandas; assert torch.version.hip, 'torch sem ROCm'; print('ok', torch.__version__)"
+
+%labels
+    org.opencontainers.image.title eyeq-rocm
+    eyeq.rocm 6.3
+    eyeq.torch 2.9.1

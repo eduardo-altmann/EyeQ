@@ -44,6 +44,12 @@ def load_eyeQ_excel(data_dir, list_file, n_class=3):
     return image_names, labels, csv_image_names
 
 
+def _build_rgb2lab_transform():
+    srgb_profile = ImageCms.createProfile("sRGB")
+    lab_profile = ImageCms.createProfile("LAB")
+    return ImageCms.buildTransformFromOpenProfiles(srgb_profile, lab_profile, "RGB", "LAB")
+
+
 class DatasetGenerator(Dataset):
     def __init__(self, data_dir, list_file, transform1=None, transform2=None, n_class=3, set_name='train'):
 
@@ -57,9 +63,19 @@ class DatasetGenerator(Dataset):
         self.transform2 = transform2
         self.set_name = set_name
 
-        srgb_profile = ImageCms.createProfile("sRGB")
-        lab_profile = ImageCms.createProfile("LAB")
-        self.rgb2lab_transform = ImageCms.buildTransformFromOpenProfiles(srgb_profile, lab_profile, "RGB", "LAB")
+        self.rgb2lab_transform = _build_rgb2lab_transform()
+
+    # O transform do ImageCms não é serializável. Com workers criados por
+    # spawn/forkserver (usado no ROCm) o dataset é serializado, então o
+    # transform é descartado e refeito no worker.
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        state['rgb2lab_transform'] = None
+        return state
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        self.rgb2lab_transform = _build_rgb2lab_transform()
 
     def __getitem__(self, index):
         image_name = self.image_names[index]

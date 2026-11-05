@@ -161,7 +161,10 @@ def main():
     best_score = -np.inf
     best_val_loss = np.inf
     best_iter = 0
-    cudnn.benchmark = True
+    # No ROCm (GPUs AMD) o benchmark faz o MIOpen otimizar cada convolução por
+    # vários minutos. Na MI50 isso atrasa um rank e estoura o timeout do DDP.
+    # O modo imediato do MIOpen já é rápido. Na NVIDIA nada muda.
+    cudnn.benchmark = torch.version.hip is None
 
     model = dense121_mcs(n_class=args.n_classes, pretrained=args.pretrained)
 
@@ -563,11 +566,11 @@ def main():
         for idx, cls_name in enumerate(label_list):
             print('  {:8s} | Accuracy: {:.4f} | Precision: {:.4f} | Recall: {:.4f} | F1: {:.4f} | AUC: {:.4f}'.format(
                 cls_name,
-                float(tmp_report['Accuracy_per_class'][idx]),
-                float(tmp_report['Precision'][idx]),
-                float(tmp_report['Sensitivity'][idx]),
-                float(tmp_report['F1'][idx]),
-                float(tmp_report['AUC_per_class'][idx]),
+                np.asarray(tmp_report['Accuracy_per_class'][idx]).item(),
+                np.asarray(tmp_report['Precision'][idx]).item(),
+                np.asarray(tmp_report['Sensitivity'][idx]).item(),
+                np.asarray(tmp_report['F1'][idx]).item(),
+                np.asarray(tmp_report['AUC_per_class'][idx]).item(),
             ))
         print('=' * 60)
 
@@ -599,11 +602,11 @@ def main():
                 f.write(
                     "  {:8s} | Accuracy: {:.4f} | Precision: {:.4f} | Recall: {:.4f} | F1: {:.4f} | AUC: {:.4f}\n".format(
                         cls_name,
-                        float(tmp_report['Accuracy_per_class'][idx]),
-                        float(tmp_report['Precision'][idx]),
-                        float(tmp_report['Sensitivity'][idx]),
-                        float(tmp_report['F1'][idx]),
-                        float(tmp_report['AUC_per_class'][idx]),
+                        np.asarray(tmp_report['Accuracy_per_class'][idx]).item(),
+                        np.asarray(tmp_report['Precision'][idx]).item(),
+                        np.asarray(tmp_report['Sensitivity'][idx]).item(),
+                        np.asarray(tmp_report['F1'][idx]).item(),
+                        np.asarray(tmp_report['AUC_per_class'][idx]).item(),
                     )
                 )
             f.write("\nConfusion matrix (rows=true, cols=predicted):\n")
@@ -612,4 +615,8 @@ def main():
     cleanup_ddp()
 
 if __name__ == "__main__":
+    if torch.version.hip is not None:
+        # No ROCm, workers do DataLoader criados por fork depois do RCCL
+        # travam o DDP na primeira iteração. forkserver cria processos limpos.
+        torch.multiprocessing.set_start_method('forkserver', force=True)
     main()

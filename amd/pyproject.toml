@@ -1,0 +1,45 @@
+# Ambiente do EyeQ para GPUs AMD (ROCm), ex.: 8 x MI50 (gfx906).
+#
+# Projeto uv separado do pyproject.toml da raiz para não mexer no lock da NVIDIA.
+# Usado com `uv run --project <repo>/amd ...` a partir de EyeQ_preprocess/ ou
+# MCF_Net/: o diretório de trabalho continua o mesmo, só o ambiente muda.
+#
+# Por que torch 2.9.1 + ROCm 6.3: testado no neowise (Grid'5000, MI50 gfx906).
+# A wheel rocm6.4 e todas as 7.x não trazem os kernels gfx906 do rocBLAS
+# (TensileLibrary_lazy_gfx906.dat), então qualquer matmul falha na MI50 mesmo
+# com a GPU detectada. A rocm6.3 traz. Para trocar de versão, confira se a
+# wheel nova tem esse arquivo e rode amd/check_rocm.py no nó.
+[project]
+name = "eyeq-amd"
+version = "0.1.0"
+description = "EyeQ / MCF-Net em GPUs AMD (ROCm)"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "matplotlib>=3.5.3",
+    "numpy>=1.21.6",
+    "opencv-python>=5.0.0.93",
+    "optuna>=4.0.0",
+    "optuna-dashboard>=0.16.2",
+    "pandas>=1.1.5",
+    "pillow>=9.5.0",
+    "psutil>=7.2.2",
+    "scikit-learn>=1.0.2",
+    "scipy>=1.10",
+    "tensorboard>=2.11.2",
+    "torch==2.9.1",
+    "torchvision==0.24.1",
+    "pytorch-triton-rocm",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-rocm" }]
+torchvision = [{ index = "pytorch-rocm" }]
+pytorch-triton-rocm = [{ index = "pytorch-rocm" }]
+
+[[tool.uv.index]]
+name = "pytorch-rocm"
+url = "https://download.pytorch.org/whl/rocm6.3"
+explicit = true
