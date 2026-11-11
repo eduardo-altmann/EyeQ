@@ -207,6 +207,8 @@ case "$ENV_MODE" in
         echo "Ambiente: Apptainer ${SIF} (sha256 $(sha256sum "$SIF" | cut -c1-16))"
         ;;
     uv)
+        # Na home (NFS) há um uv por arquitetura: ~/.local/bin-aarch64 neste nó.
+        [ -x "$HOME/.local/bin-$(uname -m)/uv" ] && export PATH="$HOME/.local/bin-$(uname -m):$PATH"
         if ! command -v uv >/dev/null 2>&1; then
             export PATH="$HOME/.local/bin:$PATH"
         fi
