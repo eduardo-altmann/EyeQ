@@ -1,0 +1,41 @@
+# Ambiente do EyeQ para os nós hydra do Grid'5000 (Lyon): NVIDIA GH200 (Hopper,
+# sm_90) em CPU Grace aarch64, 1 GPU por nó.
+#
+# Projeto uv separado dos da raiz (x86/NVIDIA) e de amd/ (ROCm). O lock só
+# resolve para linux/aarch64, que é onde a imagem Apptainer roda.
+#
+# torch 2.9.1 + CUDA 12.8 (índice cu128 tem wheels aarch64 com sm_90). Exige
+# driver NVIDIA >= 570 no nó; hydra/check_cuda.py confere antes do treino.
+[project]
+name = "eyeq-hydra"
+version = "0.1.0"
+description = "EyeQ / MCF-Net em GPUs NVIDIA GH200 (aarch64)"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "matplotlib>=3.5.3",
+    "numpy>=1.21.6",
+    "opencv-python>=5.0.0.93",
+    "optuna>=4.0.0",
+    "optuna-dashboard>=0.16.2",
+    "pandas>=1.1.5",
+    "pillow>=9.5.0",
+    "psutil>=7.2.2",
+    "scikit-learn>=1.0.2",
+    "scipy>=1.10",
+    "tensorboard>=2.11.2",
+    "torch==2.9.1",
+    "torchvision==0.24.1",
+]
+
+[tool.uv]
+package = false
+environments = ["sys_platform == 'linux' and platform_machine == 'aarch64'"]
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128" }]
+torchvision = [{ index = "pytorch-cu128" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true

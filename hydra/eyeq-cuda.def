@@ -1,0 +1,48 @@
+# Imagem Apptainer do ambiente EyeQ para os nós hydra (aarch64, NVIDIA GH200).
+#
+# Precisa ser construída num nó aarch64 (hydra), pois a imagem base e as wheels
+# são da arquitetura do build. Os pacotes Python vêm exatamente de
+# hydra/uv.lock (torch 2.9.1 + CUDA 12.8). Do host usa-se só o driver NVIDIA,
+# injetado por `apptainer exec --nv`.
+#
+# Build (ver hydra/build_container.sh), a partir da raiz do repositório:
+#   apptainer build --fakeroot eyeq-cuda12.8-aarch64.sif hydra/eyeq-cuda.def
+Bootstrap: docker
+From: python:3.12.13-slim-trixie
+
+%files
+    hydra/pyproject.toml /opt/eyeq/pyproject.toml
+    hydra/uv.lock /opt/eyeq/uv.lock
+    hydra/.python-version /opt/eyeq/.python-version
+
+%post
+    set -eu
+    apt-get update
+    apt-get install -y --no-install-recommends libgl1 libglib2.0-0 libgomp1 procps
+    rm -rf /var/lib/apt/lists/*
+
+    pip install --no-cache-dir uv==0.12.0
+    cd /opt/eyeq
+    UV_PROJECT_ENVIRONMENT=/opt/venv UV_PYTHON_DOWNLOADS=never UV_LINK_MODE=copy \
+        uv sync --frozen --no-install-project --no-cache --python /usr/local/bin/python3.12
+    pip uninstall -y uv
+
+    /opt/venv/bin/python -c "import torch, torchvision; print('torch', torch.__version__, 'cuda', torch.version.cuda, 'torchvision', torchvision.__version__)" > /opt/eyeq/versions.txt
+    /opt/venv/bin/python -m pip list --format=freeze >> /opt/eyeq/versions.txt 2>/dev/null || true
+
+%environment
+    export PATH=/opt/venv/bin:$PATH
+    export PYTHONNOUSERSITE=1
+    export MPLBACKEND=Agg
+
+%runscript
+    exec python "$@"
+
+%test
+    /opt/venv/bin/python -c "import torch, cv2, sklearn, pandas; assert torch.version.cuda, 'torch sem CUDA'; print('ok', torch.__version__)"
+
+%labels
+    org.opencontainers.image.title eyeq-cuda
+    eyeq.cuda 12.8
+    eyeq.torch 2.9.1
+    eyeq.arch aarch64
